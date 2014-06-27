@@ -1,4 +1,7 @@
 package build;
+import core.HaxeHelper;
+import js.Node;
+import parser.ClasspathWalker;
 import projectaccess.ProjectAccess;
 import core.ProcessHelper;
 import core.Utils;
@@ -42,11 +45,12 @@ class Hxml
 				case Utils.WINDOWS:
 					params.push("start");
 				default:
-					params.push("bash");
 			}
 		}
 		
-		params = params.concat(["haxe", "--cwd", dirname]);
+		var pathToHaxe = HaxeHelper.getPathToHaxe();
+			
+		params = params.concat([pathToHaxe, "--cwd", dirname]);
 		
 		if (useCompilationServer)
 		{
@@ -59,6 +63,8 @@ class Hxml
 		
 		var cwd = ProjectAccess.path;
 		
-		ProcessHelper.runProcessAndPrintOutputToConsole(process, params, cwd, onComplete);
+		var processHelper = ProcessHelper.get();
+		
+		processHelper.runProcessAndPrintOutputToConsole(process, params, cwd, onComplete);
 	}
 }

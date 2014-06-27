@@ -62,6 +62,7 @@ class Main
 	{
 		window = Window.get();
 		window.showDevTools();
+		window.title = "HIDE";
 
 		js.Node.process.on('uncaughtException', function (err)
 		{
@@ -82,7 +83,8 @@ class Main
 
 		Browser.window.addEventListener("load", function (e):Void
 		{
-			Splitter.load();
+			var splitter = Splitter.get();
+			splitter.load();
 
 			SettingsWatcher.load();
 			SnippetsWatcher.load();
@@ -91,39 +93,56 @@ class Main
 
 			BootstrapMenu.createMenuBar();
 			NewProjectDialog.load();
-			Zoom.load();
-			FileTree.init();
-			ProjectOptions.create();
+			
+			var zoom = Zoom.get();
+			zoom.load();
+			
+			var fileTreeInstance = FileTree.get();
+			fileTreeInstance.init();
+			
+			var projectOptions = ProjectOptions.get();
+			projectOptions.create();
+			
 			DialogManager.load();
 			FileDialog.create();
-			TabManager.load();
+			
+			var tabManagerInstance = TabManager.get();
+			tabManagerInstance.load();
+			
 			HaxeLint.load();
 			Editor.load();
 			MenuCommands.add();
-			Completion.registerHelper();
-
+			
+			var completionInstance = Completion.get();
+			completionInstance.load();
+			
 			HaxePrinterLoader.load();
 
 			ProjectAccess.registerSaveOnCloseListener();
 
-			HaxeProject.load();
-			OpenFLProject.load();
-            KhaProject.load();
+			var haxeProject = HaxeProject.get();
+			var openFLProject = OpenFLProject.get();
+			var khaProject = KhaProject.get();
+            khaProject.load();
 
 			CompilationOutput.load();
 
-			RecentProjectsList.load();
+			var recentProjectsList = RecentProjectsList.get();
 			OpenProject.searchForLastProject();
 			DragAndDrop.prepare();
-			ClasspathWalker.load();
-			WelcomeScreen.load();
-            QuickOpen.load();
+			var classWalker = ClasspathWalker.get();
+			var welcomeScreen = WelcomeScreen.get();
+			welcomeScreen.load();
+			
+			var quickOpen = QuickOpen.get();
 
             sync = false;
 
 			currentTime = Date.now().getTime();
 
-			ProcessHelper.checkProcessInstalled("haxe", ["-v"], function (installed:Bool)
+			var processHelper = ProcessHelper.get();
+			
+			processHelper.checkProcessInstalled("haxe", ["-v"], function (installed:Bool)
 			{
 				if (installed)
 				{
@@ -138,13 +157,13 @@ class Main
 			}
 			);
 
-			ProcessHelper.checkProcessInstalled("npm", ["-v"], function (installed:Bool):Void
+			processHelper.checkProcessInstalled("npm", ["-v"], function (installed:Bool):Void
 			{
 				trace("npm installed " + Std.string(installed));
 
 				if (installed)
 				{
-					ProcessHelper.runProcess("npm", ["list", "-g", "flambe"], null, function (stdout:String, stderr:String):Void
+					processHelper.runProcess("npm", ["list", "-g", "flambe"], null, function (stdout:String, stderr:String):Void
 					{
 						trace("flambe installed " + Std.string(stdout.indexOf("(empty)") == -1));
 					}
@@ -157,13 +176,13 @@ class Main
 			}
 			);
 
-			ProcessHelper.checkProcessInstalled("haxelib run lime", [], function (installed:Bool):Void
+			processHelper.checkProcessInstalled("haxelib run lime", [], function (installed:Bool):Void
 			{
 				trace("lime installed " + Std.string(installed));
 			}
 			);
 
-            ProcessHelper.checkProcessInstalled("git", ["--version"], function (installed:Bool)
+            processHelper.checkProcessInstalled("git", ["--version"], function (installed:Bool)
             {
                 trace("git installed " + Std.string(installed));
             }

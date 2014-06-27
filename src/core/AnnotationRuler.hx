@@ -12,15 +12,34 @@ import tabmanager.TabManager;
  */
 class AnnotationRuler
 {
-    static var positions:Array<Float> = [];
+    var positions:Array<Float> = [];
     
-	public static function addErrorMarker(pathToFile:String, line:Int, ch:Int, message:String):Void 
+	static var instance:AnnotationRuler = null;
+	
+	public function new()
 	{
+			
+	}
+	
+	public static function get()
+	{
+		if (instance == null)
+		{
+			instance = new AnnotationRuler();
+		}
+		
+		return instance;
+	}
+	
+	public function addErrorMarker(pathToFile:String, line:Int, ch:Int, message:String):Void 
+	{
+		var tabManagerInstance = TabManager.get();
+		
 		var a:AnchorElement = Browser.document.createAnchorElement();
 		a.href = "#";
 		a.onclick = function (e):Void 
 		{
-			TabManager.openFileInNewTab(pathToFile, true, function ():Void 
+			tabManagerInstance.openFileInNewTab(pathToFile, true, function ():Void 
 			{
 				var cm:Dynamic = Editor.editor;
 				cm.centerOnLine(line);
@@ -30,7 +49,7 @@ class AnnotationRuler
 		var div:DivElement = Browser.document.createDivElement();
 		div.className = "errorMarker";
 		
-		var lineCount = TabManager.getCurrentDocument().lineCount();
+		var lineCount = tabManagerInstance.getCurrentDocument().lineCount();
 		
         var targetLine:Float = line / lineCount * 100;
         
@@ -54,7 +73,7 @@ class AnnotationRuler
 		new JQuery("#annotationRuler").append(a);
 	}
 	
-	public static function clearErrorMarkers():Void 
+	public function clearErrorMarkers():Void 
 	{
 		new JQuery("#annotationRuler").children().remove();
         positions = [];

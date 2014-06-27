@@ -8,14 +8,31 @@ import tabmanager.TabManager;
  */
 class Splitter
 {
-	static var visible:Bool;
+	var visible:Bool;
 	
-	public static function load():Void
+	static var instance:Splitter;
+	
+	public function new() 
+	{
+		
+	}	
+	
+	public static function get()
+	{
+		if (instance == null)
+		{
+			instance = new Splitter();
+		}
+			
+		return instance;
+	}
+	
+	public function load():Void
 	{
 		hide();
 	}
 	
-	public static function show():Void
+	public function show():Void
 	{
 		if (visible == false) 
 		{
@@ -38,11 +55,12 @@ class Splitter
 			untyped new JQuery('#thirdNested').jqxSplitter( { showSplitBar: true } );
 			new JQuery("#annotationRuler").fadeIn(250);
 			
-			WelcomeScreen.hide();
+			var welcomeScreen = WelcomeScreen.get();
+			welcomeScreen.hide();
 		}
 	}
 	
-	public static function hide():Void
+	public function hide():Void
 	{
 		visible = false;
 		
@@ -65,13 +83,16 @@ class Splitter
 		untyped new JQuery('#thirdNested').jqxSplitter( { showSplitBar: false } );
 		new JQuery("#annotationRuler").fadeOut(250);
 		
-		if (TabManager.tabMap != null && TabManager.tabMap.getTabs().length == 0) 
+		var tabManagerInstance = TabManager.get();
+		
+		if (tabManagerInstance.tabMap != null && tabManagerInstance.tabMap.getTabs().length == 0) 
 		{
-			WelcomeScreen.show();
+			var welcomeScreen = WelcomeScreen.get();
+			welcomeScreen.show();
 		}
 	}
 	
-	public static function isVisible():Bool
+	public function isVisible():Bool
 	{
 		return visible;
 	}
