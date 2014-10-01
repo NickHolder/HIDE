@@ -1,4 +1,5 @@
 package core;
+import watchers.Watcher;
 import watchers.SettingsWatcher;
 import cm.Editor;
 import haxe.ds.StringMap.StringMap;
@@ -39,23 +40,17 @@ class Hotkeys
 		pathToData = Node.path.join(SettingsWatcher.pathToFolder,"hotkeys.json");
 		parseData();
 		
-		var options:NodeWatchOpt = { };
-		options.interval = 1500;
-		
-		Node.fs.watchFile(pathToData, options, function (curr:NodeStat, prev:NodeStat)
-		{
-			if (curr.mtime != prev.mtime) 
-			{
-				parseData();
-				hotkeys = new Array();
-				
-				for (key in commandMap.keys()) 
-				{
-					addHotkey(key);
-				}
-			}
-		}
-		);
+		Watcher.watchFileForUpdates(pathToData, function ()
+									{
+										parseData();
+										hotkeys = new Array();
+
+										for (key in commandMap.keys()) 
+										{
+											addHotkey(key);
+										}
+									}
+								   , 1500);
 		
 		Browser.window.addEventListener("keydown", function (e:KeyboardEvent)
 		{
@@ -220,6 +215,10 @@ class Hotkeys
 					keyCode = 32;
 				case "+":
 					keyCode = 187;
+				case "pageup":
+					keyCode = 33;
+				case "pagedown":
+					keyCode = 34;
 				case "": 
 					keyCode = 189;
 				default:

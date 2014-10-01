@@ -1,5 +1,6 @@
 package cm;
 #if !macro
+import watchers.SettingsWatcher;
 import projectaccess.Project.FileData;
 import parser.RegexParser;
 import CodeMirror.Pos;
@@ -56,7 +57,7 @@ class Editor
 		
 		try 
 		{
-			options = TJSON.parse(Node.fs.readFileSync(Node.path.join("core", "config", "editor.json"), readFileOptions));
+			options = TJSON.parse(Node.fs.readFileSync(Node.path.join(SettingsWatcher.pathToFolder, "editor.json"), readFileOptions));
 		}
 		catch (err:Error)
 		{
@@ -85,7 +86,7 @@ class Editor
 						}
 					}
 					
-					untyped __js__("return CodeMirror.Pass");
+					return CodeMirrorStatic.Pass;
 				},
 			";":
 				function passAndHint(cm:CodeMirror) 
@@ -96,10 +97,11 @@ class Editor
 					if (ch == ";") 
 					{
 						cm.execCommand("goCharRight");
+						return null;
 					}
 					else 
 					{
-						untyped __js__("return CodeMirror.Pass");
+						return CodeMirrorStatic.Pass;
 					}
 				},
            	"=":
@@ -122,16 +124,17 @@ class Editor
                             cm2.replaceRange("=\"\"", cur, cur);
                             cm2.execCommand("goCharLeft");
                             xmlInstance.completeIfInTag(cm2);
+							return null;
                         }
                         else
                         {
-                            untyped __js__("return CodeMirror.Pass");
+                            return CodeMirrorStatic.Pass;
                         }
                         
 					}
 					else
                     {
-                        untyped __js__("return CodeMirror.Pass");
+                        return CodeMirrorStatic.Pass;
                     }
 					
 				},
@@ -147,20 +150,20 @@ class Editor
             	function passAndHint(cm2:CodeMirror)
             	{
                     xmlInstance.completeAfter(cm2);
-                    untyped __js__("return CodeMirror.Pass");
+                    return CodeMirrorStatic.Pass;
                 },
             	
             "\\\'/\\\'":
             	function passAndHint(cm2:CodeMirror)
             	{
                     xmlInstance.completeIfAfterLt(cm2);
-                    untyped __js__("return CodeMirror.Pass");
+                    return CodeMirrorStatic.Pass;
                 },
             "\\\' \\\'":
                 function passAndHint(cm2:CodeMirror)
             	{
                     xmlInstance.completeIfInTag(cm2);
-                    untyped __js__("return CodeMirror.Pass");
+                    return CodeMirrorStatic.Pass;
                 },
             "Ctrl-J": "toMatchingTag"
 		}
@@ -318,6 +321,17 @@ class Editor
                     var name = StringTools.trim(data.substring(0, cursor.ch - 2));
 					
 					var type = null;
+					
+					var ereg = ~/[a-z_0-9]+$/i;
+					
+					var start = name.length;
+					
+					while (start - 1 > 0 && ereg.match(name.charAt(start - 1))) 
+					{
+						start--;
+					}
+
+					name = name.substr(start);
 					
 					if (name != "" && name.indexOf(".") == -1)
 					{						
@@ -487,6 +501,10 @@ class Editor
 						triggerCompletion(editor, false);
 					}
 				}
+				else if	(StringTools.endsWith(data, "new ") || StringTools.endsWith(data, "extends "))
+				{
+					completionInstance.showClassList(false);
+				}
 			}
 			else if (modeName == "hxml") 
 			{
@@ -501,7 +519,7 @@ class Editor
                 {
                     completionInstance.showFileList(false, true);
                 }
-                else if (data == "-dce ")
+                else if (data == "-dce " || data == "-lib ")
                 {
                     completionInstance.showHxmlCompletion();
 				}
@@ -524,7 +542,10 @@ class Editor
 			{
 // 				Helper.debounce("type", function ():Void
 // 						   {
-							   if (isValidWordForCompletionOnType())
+							 var text = e.text[0];
+							 var removed = e.removed[0];
+				
+							   if (text != "\t" && text != " " && removed != "\t" && removed != " " && isValidWordForCompletionOnType())
 							   {
 								   var doc = tabManagerInstance.getCurrentDocument();
 								   var pos = doc.getCursor();
@@ -733,7 +754,7 @@ class Editor
 		new JQuery("#annotationRuler").css("height", Std.string(Std.int(height - 1)) + "px");
 	}
 	
-	private static function loadTheme() 
+	static function loadTheme() 
 	{
 		var localStorage2 = Browser.getLocalStorage();
 		
@@ -753,7 +774,7 @@ class Editor
 		
 	}
 	
-	private static function loadThemes(themes:Array<String>, onComplete:Dynamic):Void
+	static function loadThemes(themes:Array<String>, onComplete:Dynamic):Void
 	{
 		var themesSubmenu = BootstrapMenu.getMenu("View").getSubmenu("Themes");
 		var theme:String;
@@ -771,7 +792,7 @@ class Editor
 		onComplete();
 	}
 	
-	private static function setTheme(theme:String):Void
+	public static function setTheme(theme:String):Void
 	{
 		editor.setOption("theme", theme);
 		Browser.getLocalStorage().setItem("theme", theme);

@@ -1,4 +1,8 @@
 package watchers;
+import cm.Editor;
+import js.Node.NodeFsFileOptions;
+import js.html.LinkElement;
+import js.Browser;
 import js.Node;
 import haxe.Timer;
 import jQuery.JQuery;
@@ -11,11 +15,29 @@ import nodejs.webkit.Window;
  */
 class ThemeWatcher
 {
-	static var watcher:Dynamic;
-	static var listenerAdded:Bool = false;
-    static var pathToTheme:String;
+	var watcher:Dynamic;
+	var listenerAdded:Bool = false;
+    var pathToTheme:String;
+	var currentTheme:String;
 	
-	public static function load() 
+	static var instance:ThemeWatcher;
+	
+	public function new() 
+	{
+		
+	}	
+	
+	public static function get()
+	{
+		if (instance == null)
+		{
+			instance = new ThemeWatcher();
+		}
+			
+		return instance;
+	}
+	
+	public function load() 
 	{		
         pathToTheme = Node.path.join("core", SettingsWatcher.settings.theme);
         
@@ -32,7 +54,7 @@ class ThemeWatcher
                          });
 	}
     
-    static function continueLoading()
+    function continueLoading()
     {
         updateTheme();
 		
@@ -61,7 +83,7 @@ class ThemeWatcher
 		}
     }
 	
-    static function getListOfCSSFiles()
+    function getListOfCSSFiles()
     {
         var files:Array<String> = [];
         
@@ -76,8 +98,27 @@ class ThemeWatcher
         return files;
     }
     
-	static function updateTheme() 
+	function updateTheme(?type:String) 
 	{
-		new JQuery("#theme").attr("href", SettingsWatcher.settings.theme);
+		var theme = SettingsWatcher.settings.theme;
+		new JQuery("#theme").attr("href", theme);
+		
+		if (currentTheme != null && currentTheme != theme)
+		{
+			var ereg = ~/\/\* *codeEditorTheme *= *([^ \*]*) *\*\//g;
+		
+			var options:NodeFsFileOptions = {};
+			options.encoding = NodeC.UTF8;
+
+			var data = Node.fs.readFileSync(Node.path.join("core", theme), options);
+
+			if (ereg.match(data))
+			{
+				var codeEditorTheme = ereg.matched(1);
+				Editor.setTheme(codeEditorTheme);
+			}
+		}
+			
+		currentTheme = theme;
 	}
 }

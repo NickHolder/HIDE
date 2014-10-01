@@ -11,30 +11,13 @@
 
     ]
     ,"files" : [
-         {
-             "path" : "src/completion/GoToDeclaration.hx"
-            ,"useTabs" : true
-            ,"indentSize" : 4
-            ,"foldedRegions" : [
 
-            ]
-            ,"activeLine" : 65
-        }
-        ,{
-             "path" : "src/haxeproject/HaxeProject.hx"
-            ,"useTabs" : true
-            ,"indentSize" : 4
-            ,"foldedRegions" : [
-
-            ]
-            ,"activeLine" : 215
-        }
     ]
-    ,"activeFile" : "src/haxeproject/HaxeProject.hx"
+    ,"activeFile" : "src/HIDE.hx"
     ,"openFLTarget" : null
     ,"openFLBuildMode" : "Debug"
     ,"runActionType" : 2
-    ,"runActionText" : "haxelib run node-webkit ~/HIDE/bin"
+    ,"runActionText" : null
     ,"buildActionCommand" : null
     ,"hiddenItems" : [
 

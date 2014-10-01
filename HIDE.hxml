@@ -5,11 +5,11 @@
 -cp libs/haxeprinter/src
 -cp libs/nodejs-std
 -cp externs/alertify
+
 -js ./bin/core/HIDE.js
 -main Main
 -lib jQueryExtern
 -lib tjson
--lib mustache
 -resource libs/haxeprinter/res/config.json@config
 -D noStyle
 -D nodejs

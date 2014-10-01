@@ -1,4 +1,6 @@
 package haxeproject;
+import haxe.Template;
+import newprojectdialog.NewProjectDialog.ProjectData;
 import core.Utils;
 import core.Splitter;
 import filetree.FileTree;
@@ -6,7 +8,6 @@ import js.Browser;
 import js.html.TextAreaElement;
 import js.Node;
 import js.node.Mkdirp;
-import mustache.Mustache;
 import newprojectdialog.NewProjectDialog;
 import openproject.OpenProject;
 import projectaccess.Project;
@@ -50,7 +51,7 @@ class HaxeProject
 			var options:NodeFsFileOptions = { };
 			options.encoding = NodeC.UTF8;
 			
-			var path:String = Node.path.join("core", "templates", "Main.hx");
+			var path:String = Node.path.join("core", "templates", "Main.tpl");
 			
 			Node.fs.readFile(path, options, function (error:NodeErr, data:String):Void
 			{
@@ -58,7 +59,7 @@ class HaxeProject
 				{
 					code = data;
 				}
-				else 
+				else
 				{
 					trace(error);
 					Alertify.error("Can't load template " + path);
@@ -66,7 +67,7 @@ class HaxeProject
 			}
 			);
 			
-			path = Node.path.join("core", "templates", "index.html");
+			path = Node.path.join("core", "templates", "index.tpl");
 			
 			Node.fs.readFile(path, options, function (error:NodeErr, data:String):Void
 			{
@@ -123,7 +124,7 @@ class HaxeProject
 		createHaxeProject(data, Project.JAVASCRIPT);
 	}
 	
-	function createHaxeProject(data:Dynamic, target:Int):Void
+	function createHaxeProject(data:ProjectData, target:Int):Void
 	{
 		var pathToSrc:String = Node.path.join(data.projectLocation, data.projectName, "src");
 		
@@ -136,11 +137,40 @@ class HaxeProject
 				pathToProject = Node.path.join(pathToProject, data.projectName);
 			}
 			
+			var project:Project = new Project();
+			project.name = data.projectName;
+			project.projectPackage = data.projectPackage;
+			project.company = data.projectCompany;
+			project.license = data.projectLicense;
+			project.url = data.projectURL;
+			project.type = Project.HAXE;
+			project.target = target;
+			ProjectAccess.path = pathToProject;
+			ProjectAccess.currentProject = project;
+				
+			var pathToSrc = Node.path.join(pathToProject, "src");
+			
+			var fullPackagePath = "";
+			
+			if (data.projectPackage != "")
+			{
+				fullPackagePath = StringTools.replace(data.projectPackage, ".", Node.path.sep);
+				Mkdirp.mkdirpSync(Node.path.join(pathToSrc, fullPackagePath));
+			}
+			
 			var pathToMain:String;
 			
-			pathToMain = Node.path.join(pathToProject, "src", "Main.hx");
+			pathToMain = Node.path.join(pathToSrc, fullPackagePath, "Main.hx");
 			
-			js.Node.fs.writeFile(pathToMain, code, function (error:js.Node.NodeErr):Void
+			var tabManagerInstance = TabManager.get();
+			
+			var fileTemplate:FileTemplate = {};
+			
+			fileTemplate = tabManagerInstance.generateTemplate(fileTemplate, data.projectPackage);
+			
+			var templateCode = new Template(code).execute(fileTemplate);
+			
+			js.Node.fs.writeFile(pathToMain, templateCode, function (error:js.Node.NodeErr):Void
 			{
 				if (error != null)
 				{
@@ -163,16 +193,6 @@ class HaxeProject
 			}
 			);
 			
-			var project:Project = new Project();
-			project.name = data.projectName;
-			project.projectPackage = data.projectPackage;
-			project.company = data.projectCompany;
-			project.license = data.projectLicense;
-			project.url = data.projectURL;
-			project.type = Project.HAXE;
-			project.target = target;
-			ProjectAccess.path = pathToProject;
-			
 			var filenames = ["flash", "javascript", "neko", "php", "cpp", "java", "csharp", "python"];
 			
 			var pathToProjectTemplates = Node.path.join("core", "templates", "project");
@@ -185,7 +205,7 @@ class HaxeProject
 				var options:NodeFsFileOptions = { };
 				options.encoding = NodeC.UTF8;
 				
-				var templateCode:String = Node.fs.readFileSync(Node.path.join(pathToProjectTemplates, targetData.pathToHxml), options);
+				var templateCode:String = Node.fs.readFileSync(Node.path.join(pathToProjectTemplates, filenames[i] + ".tpl"), options);
 				
 				var pathToFile:String;
 				
@@ -230,7 +250,10 @@ class HaxeProject
 						throw "Path to file is null";
 				}
 				
-				templateCode = Mustache.render(templateCode, { file: pathToFile } );
+				var templateCode = new Template(templateCode).execute({ file: pathToFile, pack: data.projectPackage });
+				
+// 				Cpp.generateHxml(pathToFile);
+				// templateCode = Mustache.render(templateCode, { file: pathToFile } );
 				Node.fs.writeFileSync(Node.path.join(pathToProject, targetData.pathToHxml), templateCode, NodeC.UTF8);
 				
 				project.targetData.push(targetData);
@@ -241,7 +264,8 @@ class HaxeProject
 				if (error == null) 
 				{
 					//JavaScript template from "templates/index.html"
-					var updatedPageCode:String = Mustache.render(indexPageCode, { title: project.name, script: project.name + ".js" } );
+					var updatedPageCode:String = new Template(indexPageCode).execute({ title: project.name, script: project.name + ".js" });
+// 					var updatedPageCode:String = Mustache.render(indexPageCode, { title: project.name, script: project.name + ".js" } );
 					var pathToWebPage:String = Node.path.join(pathToProject, "bin", "index.html");
 					
 					Node.fs.writeFile(pathToWebPage, updatedPageCode, NodeC.UTF8, function (error:js.Node.NodeErr):Void
@@ -261,7 +285,6 @@ class HaxeProject
 			});
 			
 			var path:String = js.Node.path.join(pathToProject, "project.hide");
-			ProjectAccess.currentProject = project;
 			ProjectAccess.save(OpenProject.openProject.bind(path));
 		}
 		);

@@ -1,4 +1,5 @@
 package filetree;
+import projectaccess.Project;
 import core.RunProject;
 import haxe.ds.StringMap.StringMap;
 import jQuery.JQuery;
@@ -29,13 +30,19 @@ import core.OutlinePanel.TreeItem;
  * @author AS3Boyan
  */
 
+typedef ContextMenuItem = 
+{
+	?element:LIElement,
+	?cb:Dynamic
+}
+
 class FileTree
 {
 	var lastProjectName:String;
 	var lastProjectPath:String;
 	
 	var contextMenu:Dynamic;
-	var contextMenuCommandsMap:StringMap<Dynamic>;
+	var contextMenuCommandsMap:StringMap<ContextMenuItem>;
 	var watcher:Dynamic;
 	
 	static var instance:FileTree;
@@ -71,12 +78,13 @@ class FileTree
 			{
 				path = Node.path.dirname(selectedItem.value.path);
 			}
-			
+				
 			Alertify.prompt(LocaleWatcher.getStringSync("Filename:"), function (e:Bool, str:String)
 			{
 				if (e) 
 				{
 					var pathToFile:String = js.Node.path.join(path, str);
+					
 					var tabManager = TabManager.get();
 					tabManager.createFileInNewTab(pathToFile);
 					untyped new JQuery('#filetree').jqxTree('addTo', createFileItem(pathToFile) , selectedItem.element);
@@ -112,7 +120,8 @@ class FileTree
 						{
 							if (error == null) 
 							{
-								untyped new JQuery('#filetree').jqxTree('addTo', { label: str, value: {type: "folder", path: pathToFolder}, icon: "includes/images/folder.png" }, selectedItem.element);
+								untyped new JQuery('#filetree').jqxTree('addTo', { label: str, value: {type: "folder", path: pathToFolder}}, selectedItem.element);
+								//icon: "includes/images/folder.png"
 								attachContextMenu();
 							}
 							else 
@@ -125,7 +134,7 @@ class FileTree
 			}, "New Folder");
 		});
 		
-		appendToContextMenu("Open Item", function (selectedItem):Void 
+		appendToContextMenu("Edit", function (selectedItem):Void 
 		{
 			var tabManager = TabManager.get();
 			
@@ -139,7 +148,7 @@ class FileTree
 			}
 		});
 		
-		appendToContextMenu("Open using OS", function (selectedItem):Void 
+		appendToContextMenu("Execute", function (selectedItem):Void 
 		{
 			Shell.openItem(selectedItem.value.path);
 		});
@@ -230,7 +239,7 @@ class FileTree
 		}
 		);
 		
-		appendToContextMenu("Toggle Hidden Items Visibility", function (selectedItem):Void 
+		appendToContextMenu("Hide/Unhide All", function (selectedItem):Void 
 		{
 			if (ProjectAccess.path != null) 
 			{
@@ -247,21 +256,21 @@ class FileTree
 		}
 		);
 		
-		appendToContextMenu("Toggle Item Visibility", function (selectedItem):Void 
+		appendToContextMenu("Hide/Unhide", function (selectedItem):Void 
 		{
 			if (ProjectAccess.path != null) 
 			{
-				var relativePath:String = Node.path.relative(ProjectAccess.path, selectedItem.value.path);
+				var path = selectedItem.value.path;
 				
-				if (ProjectAccess.currentProject.hiddenItems.indexOf(relativePath) == -1) 
+				if (!ProjectAccess.isItemHidden(path))
 				{
-					ProjectAccess.currentProject.hiddenItems.push(relativePath);
+					ProjectAccess.hideItem(path);
 					untyped new JQuery('#filetree').jqxTree('removeItem', selectedItem.element);
 					attachContextMenu();
 				}
 				else 
 				{
-					ProjectAccess.currentProject.hiddenItems.remove(relativePath);
+					ProjectAccess.unhideItem(path);
 					load();
 				}
 			}
@@ -297,8 +306,13 @@ class FileTree
 		
 		new JQuery("#jqxMenu").on('itemclick', function (event) 
 		{
-			var item = JQueryStatic.trim(new JQuery(event.args).text());
-			contextMenuCommandsMap.get(item)();
+			var item = Lambda.find(contextMenuCommandsMap, function (contextMenuItem)
+						{
+							return event.args == contextMenuItem.element;
+						}
+					   );
+			
+			item.cb();
 		}
 		);
 		
@@ -306,10 +320,15 @@ class FileTree
 		{
 			var item = untyped new JQuery('#filetree').jqxTree('getSelectedItem');
 			
-			if (item.value.type == 'file') 
+			if (item != null)
 			{
-				var tabManager = TabManager.get();
-				tabManager.openFileInNewTab(item.value.path);
+				var value = item.value;
+			
+				if (value != null && value.type == 'file') 
+				{
+					var tabManager = TabManager.get();
+					tabManager.openFileInNewTab(item.value.path);
+				}
 			}
 		}
 		);
@@ -364,12 +383,28 @@ class FileTree
 	
 	static function updateProjectMainHxml()
 	{
-		var noproject = (ProjectAccess.path == null || ProjectAccess.currentProject.main == null);
+		var project = ProjectAccess.currentProject;
+		
+		var noproject = (ProjectAccess.path == null);
+		
 		var main = null;
 		
-		if (!noproject)
+		switch (project.type)
 		{
-			main = Node.path.resolve(ProjectAccess.path, ProjectAccess.currentProject.main);
+			case Project.HAXE:
+				if (!noproject)
+				{
+					main = Node.path.resolve(ProjectAccess.path, project.targetData[project.target].pathToHxml);
+				}
+
+			case Project.HXML:
+				if (!noproject && project.main != null)
+				{
+					main = Node.path.resolve(ProjectAccess.path, project.main);
+				}
+			case Project.OPENFL:
+			default:
+
 		}
 		
 		var items:Array<Dynamic> = untyped new JQuery('#filetree').jqxTree('getItems');
@@ -378,7 +413,7 @@ class FileTree
 		{
 			var li = cast(item.element, LIElement);
 
-			if (!noproject && item.value.path == main)
+			if (!noproject && main != null && item.value.path == main)
 			{
 				li.classList.add("mainHxml");
 			}
@@ -386,7 +421,6 @@ class FileTree
 			{
 				li.classList.remove("mainHxml");
 			}
-
 		}
 	}
 
@@ -396,14 +430,20 @@ class FileTree
 		li.textContent = name;
 		new JQuery("#filetreemenu").append(li);
 		
-		contextMenuCommandsMap.set(name, function ():Void 
+		var contextMenuItem:ContextMenuItem = {};
+		
+		contextMenuItem.cb = function ():Void 
 		{
 			var selectedItem = untyped new JQuery('#filetree').jqxTree('getSelectedItem');
 			if (selectedItem != null) 
 			{
 				onClick(selectedItem);
 			}
-		});
+		};
+		
+		contextMenuItem.element = li;
+		
+		contextMenuCommandsMap.set(name, contextMenuItem);
 	}
 	
 	function attachContextMenu() 
@@ -417,6 +457,57 @@ class FileTree
 				untyped new JQuery("#filetree").jqxTree('selectItem', target);
 				var scrollTop = new JQuery(Browser.window).scrollTop();
 				var scrollLeft = new JQuery(Browser.window).scrollLeft();
+				
+				var selectedItem = untyped new JQuery("#filetree").jqxTree('getSelectedItem');
+				var extname = Node.path.extname(selectedItem.value.path);
+				
+				var editElement = contextMenuCommandsMap.get("Edit").element;
+				
+				if (selectedItem.value.type == "file")
+				{
+					editElement.textContent = "Edit";
+				}
+				else if (selectedItem.value.type == "folder")
+				{
+					editElement.textContent = "Open Folder";
+				}
+				
+				var setAsCompileMainelement = contextMenuCommandsMap.get("Set As Compile Main").element;
+				
+				if (extname != ".hxml")
+				{
+					new JQuery(setAsCompileMainelement).hide();
+				}
+				else
+				{
+					new JQuery(setAsCompileMainelement).show();
+				}
+				
+				if (ProjectAccess.path != null)
+				{
+					var hideUnhideItemElement = contextMenuCommandsMap.get("Hide/Unhide").element;
+					
+					if (!ProjectAccess.isItemHidden(selectedItem.value.path))
+					{
+						hideUnhideItemElement.textContent = "Hide";
+					}
+					else
+					{
+						hideUnhideItemElement.textContent = "Unhide";
+					}
+						
+					var showHiddenItemsElement = contextMenuCommandsMap.get("Hide/Unhide All").element;
+						
+					if (ProjectAccess.currentProject.showHiddenItems)
+					{
+						showHiddenItemsElement.textContent = "Hide All";
+					}
+					else
+					{
+						showHiddenItemsElement.textContent = "Unhide All";
+					}
+				}
+				
 				contextMenu.jqxMenu('open', Std.parseInt(event.clientX) + 5 + scrollLeft, Std.parseInt(event.clientY) + 5 + scrollTop);
 				return false;
 			}

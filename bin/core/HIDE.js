@@ -23,6 +23,11 @@ EReg.prototype = {
 	,matched: function(n) {
 		if(this.r.m != null && n >= 0 && n < this.r.m.length) return this.r.m[n]; else throw "EReg::matched";
 	}
+	,matchedRight: function() {
+		if(this.r.m == null) throw "No string matched";
+		var sz = this.r.m.index + this.r.m[0].length;
+		return this.r.s.substr(sz,this.r.s.length - sz);
+	}
 	,matchedPos: function() {
 		if(this.r.m == null) throw "No string matched";
 		return { pos : this.r.m.index, len : this.r.m[0].length};
@@ -43,9 +48,6 @@ EReg.prototype = {
 			}
 			return b1;
 		}
-	}
-	,replace: function(s,by) {
-		return s.replace(this.r,by);
 	}
 	,map: function(s,f) {
 		var offset = 0;
@@ -87,7 +89,8 @@ HIDE.traceScriptLoadingInfo = function(name,url) {
 	if(name != null) str = "\n" + name + ":\n" + url + "\n"; else str = url + " loaded";
 };
 HIDE.getPluginPath = function(name) {
-	var pathToPlugin = pluginloader.PluginManager.pathToPlugins.get(name);
+	var pluginManager = pluginloader.PluginManager.get();
+	var pathToPlugin = pluginManager.pathToPlugins.get(name);
 	if(pathToPlugin == null) console.log("HIDE can't find path for plugin: " + name + "\nPlease check folder structure of plugin, make sure that it corresponds to it's 'name'");
 	return pathToPlugin;
 };
@@ -103,7 +106,8 @@ HIDE.openPageInNewWindow = function(name,url,params) {
 	return $window;
 };
 HIDE.compilePlugins = function(onComplete,onFailed) {
-	pluginloader.PluginManager.compilePlugins(onComplete,onFailed);
+	var pluginManager = pluginloader.PluginManager.get();
+	pluginManager.compilePlugins(onComplete,onFailed);
 };
 HIDE.surroundWithQuotes = function(path) {
 	return "\"" + path + "\"";
@@ -259,6 +263,20 @@ List.prototype = {
 		if(this.q == null) this.q = x;
 		this.length++;
 	}
+	,first: function() {
+		if(this.h == null) return null; else return this.h[0];
+	}
+	,pop: function() {
+		if(this.h == null) return null;
+		var x = this.h[0];
+		this.h = this.h[1];
+		if(this.h == null) this.q = null;
+		this.length--;
+		return x;
+	}
+	,isEmpty: function() {
+		return this.h == null;
+	}
 	,remove: function(v) {
 		var prev = null;
 		var l = this.h;
@@ -303,7 +321,8 @@ Main.main = function() {
 		var splitter = core.Splitter.get();
 		splitter.load();
 		watchers.SettingsWatcher.load();
-		watchers.SnippetsWatcher.load();
+		var snippetsCompletion = watchers.SnippetsWatcher.get();
+		snippetsCompletion.load();
 		core.Utils.prepare();
 		core.Hotkeys.prepare();
 		menu.BootstrapMenu.createMenuBar();
@@ -318,6 +337,8 @@ Main.main = function() {
 		core.FileDialog.create();
 		var tabManagerInstance = tabmanager.TabManager.get();
 		tabManagerInstance.load();
+		var classpathWalker = parser.ClasspathWalker.get();
+		classpathWalker.load();
 		core.HaxeLint.load();
 		cm.Editor.load();
 		core.MenuCommands.add();
@@ -337,16 +358,18 @@ Main.main = function() {
 		var welcomeScreen = core.WelcomeScreen.get();
 		welcomeScreen.load();
 		var quickOpen = core.QuickOpen.get();
+		watchers.LocaleWatcher.processHtmlElements();
 		Main.sync = false;
 		Main.currentTime = new Date().getTime();
 		var processHelper = core.ProcessHelper.get();
+		var pluginManager = pluginloader.PluginManager.get();
 		processHelper.checkProcessInstalled("haxe",["-v"],function(installed) {
 			if(installed) {
 				core.HaxeServer.check();
-				pluginloader.PluginManager.loadPlugins();
+				pluginManager.loadPlugins();
 			} else {
 				Alertify.error("Haxe compiler is not found");
-				pluginloader.PluginManager.loadPlugins(false);
+				pluginManager.loadPlugins(false);
 			}
 		});
 		processHelper.checkProcessInstalled("npm",["-v"],function(installed1) {
@@ -390,10 +413,6 @@ Reflect.field = function(o,field) {
 };
 Reflect.setField = function(o,field,value) {
 	o[field] = value;
-};
-Reflect.getProperty = function(o,field) {
-	var tmp;
-	if(o == null) return null; else if(o.__properties__ && (tmp = o.__properties__["get_" + field])) return o[tmp](); else return o[field];
 };
 Reflect.fields = function(o) {
 	var a = [];
@@ -820,7 +839,6 @@ Xml.prototype = {
 		return s.b;
 	}
 	,__class__: Xml
-	,__properties__: {set_nodeValue:"set_nodeValue",get_nodeValue:"get_nodeValue",set_nodeName:"set_nodeName",get_nodeName:"get_nodeName"}
 };
 var autoformat = {};
 autoformat.HaxePrinter = function() { };
@@ -1074,7 +1092,6 @@ byte.js._ByteData = {};
 byte.js._ByteData.ByteData_Impl_ = function() { };
 $hxClasses["byte.js._ByteData.ByteData_Impl_"] = byte.js._ByteData.ByteData_Impl_;
 byte.js._ByteData.ByteData_Impl_.__name__ = ["byte","js","_ByteData","ByteData_Impl_"];
-byte.js._ByteData.ByteData_Impl_.__properties__ = {get_length:"get_length"}
 byte.js._ByteData.ByteData_Impl_.get_length = function(this1) {
 	return this1.length;
 };
@@ -1222,7 +1239,7 @@ cm.Editor.load = function() {
 	readFileOptions.encoding = "utf8";
 	var options = { };
 	try {
-		options = tjson.TJSON.parse(js.Node.require("fs").readFileSync(js.Node.require("path").join("core","config","editor.json"),readFileOptions));
+		options = tjson.TJSON.parse(js.Node.require("fs").readFileSync(js.Node.require("path").join(watchers.SettingsWatcher.pathToFolder,"editor.json"),readFileOptions));
 	} catch( err ) {
 		if( js.Boot.__instanceof(err,Error) ) {
 			console.log(err);
@@ -1249,9 +1266,10 @@ cm.Editor.load = function() {
 		var passAndHint1 = function(cm1) {
 			var cursor = cm.Editor.editor.getCursor();
 			var ch = cm.Editor.editor.getRange(cursor,{ line : cursor.line, ch : cursor.ch + 1});
-			if(ch == ";") cm1.execCommand("goCharRight"); else {
-				return CodeMirror.Pass;
-			}
+			if(ch == ";") {
+				cm1.execCommand("goCharRight");
+				return null;
+			} else return CodeMirror.Pass;
 		};
 		$r = passAndHint1;
 		return $r;
@@ -1267,12 +1285,9 @@ cm.Editor.load = function() {
 					cm2.replaceRange("=\"\"",cur,cur);
 					cm2.execCommand("goCharLeft");
 					xmlInstance.completeIfInTag(cm2);
-				} else {
-					return CodeMirror.Pass;
-				}
-			} else {
-				return CodeMirror.Pass;
-			}
+					return null;
+				} else return CodeMirror.Pass;
+			} else return CodeMirror.Pass;
 		};
 		$r = passAndHint2;
 		return $r;
@@ -1382,6 +1397,10 @@ cm.Editor.load = function() {
 			if(lastChar == ".") cm.Editor.triggerCompletion(cm.Editor.editor,true); else if(data.charAt(cursor1.ch - 2) == "=" && lastChar == " ") {
 				var name = StringTools.trim(data.substring(0,cursor1.ch - 2));
 				var type = null;
+				var ereg = new EReg("[a-z_0-9]+$","i");
+				var start = name.length;
+				while(start - 1 > 0 && ereg.match(name.charAt(start - 1))) start--;
+				name = HxOverrides.substr(name,start,null);
 				if(name != "" && name.indexOf(".") == -1) {
 					var variableDeclarations = parser.RegexParser.getVariableDeclarations(doc1.getValue());
 					var variableWithExplicitType = [];
@@ -1415,9 +1434,9 @@ cm.Editor.load = function() {
 						while(_g7 < variableWithSameType.length) {
 							var item3 = variableWithSameType[_g7];
 							++_g7;
-							var ereg = new EReg("[\t ]*" + item3 + "[\t ]*= *(.+)$","gm");
+							var ereg1 = new EReg("[\t ]*" + item3 + "[\t ]*= *(.+)$","gm");
 							var ereg2 = new EReg("[\t ]*" + item3 + "[\t ]*:[a-zA-Z0-9_<>]*[\t ]*= *(.+)$","gm");
-							ereg.map(value1,function(ereg3) {
+							ereg1.map(value1,function(ereg3) {
 								var text = StringTools.trim(ereg3.matched(1));
 								if(text != "" && HxOverrides.indexOf(suggestions,text,0) == -1) suggestions.push(text);
 								return "";
@@ -1432,8 +1451,8 @@ cm.Editor.load = function() {
 						completionInstance.showCodeSuggestions(suggestions);
 					} else {
 						console.log(name);
-						var ereg1 = new EReg("[\t ]*" + name + "[\t ]*= *(.+)$","gm");
-						ereg1.map(value1,function(ereg32) {
+						var ereg4 = new EReg("[\t ]*" + name + "[\t ]*= *(.+)$","gm");
+						ereg4.map(value1,function(ereg32) {
 							var text2 = StringTools.trim(ereg32.matched(1));
 							if(text2 != "" && HxOverrides.indexOf(suggestions,text2,0) == -1) suggestions.push(text2);
 							return "";
@@ -1464,19 +1483,21 @@ cm.Editor.load = function() {
 					}
 				}
 			} else if(StringTools.endsWith(data,"import ")) completionInstance.showClassList(true); else if(StringTools.endsWith(data,"in )")) {
-				var ereg4 = new EReg("for[\t ]*\\([a-z_0-9]+[\t ]+in[\t ]+\\)","gi");
-				if(ereg4.match(data)) cm.Editor.triggerCompletion(cm.Editor.editor,false);
-			}
+				var ereg5 = new EReg("for[\t ]*\\([a-z_0-9]+[\t ]+in[\t ]+\\)","gi");
+				if(ereg5.match(data)) cm.Editor.triggerCompletion(cm.Editor.editor,false);
+			} else if(StringTools.endsWith(data,"new ") || StringTools.endsWith(data,"extends ")) completionInstance.showClassList(false);
 		} else if(modeName == "hxml") {
 			var cursor2 = cm6.getCursor();
 			var data1 = cm6.getLine(cursor2.line);
-			if(data1 == "-") completionInstance.showHxmlCompletion(); else if(data1 == "-cp ") completionInstance.showFileList(false,true); else if(data1 == "-dce ") completionInstance.showHxmlCompletion(); else if(data1 == "--macro ") completionInstance.showClassList(true);
+			if(data1 == "-") completionInstance.showHxmlCompletion(); else if(data1 == "-cp ") completionInstance.showFileList(false,true); else if(data1 == "-dce " || data1 == "-lib ") completionInstance.showHxmlCompletion(); else if(data1 == "--macro ") completionInstance.showClassList(true);
 		}
 		var tab = tabManagerInstance.tabMap.get(tabManagerInstance.selectedPath);
 		tab.setChanged(!tab.doc.isClean());
 		console.log(e2);
 		if(HxOverrides.indexOf(["+input","+delete"],e2.origin,0) != -1) {
-			if(cm.Editor.isValidWordForCompletionOnType()) {
+			var text3 = e2.text[0];
+			var removed = e2.removed[0];
+			if(text3 != "\t" && text3 != " " && removed != "\t" && removed != " " && cm.Editor.isValidWordForCompletionOnType()) {
 				var doc2 = tabManagerInstance.getCurrentDocument();
 				var pos2 = doc2.getCursor();
 				completionInstance.getCompletion(function() {
@@ -1950,14 +1971,14 @@ completion.GoToDeclaration.prototype = {
 				var posData = completionInstance.declarationPositions[0];
 				if(ereg.match(posData)) {
 					var path = ereg.matched(1);
-					var line = Std.parseInt(ereg.matched(2));
+					var line = Std.parseInt(ereg.matched(2)) - 1;
 					var posType = ereg.matched(3);
 					var from = Std.parseInt(ereg.matched(4));
 					var to = Std.parseInt(ereg.matched(5));
 					var from2 = null;
 					var to2 = null;
 					if(posType == "lines") {
-						from2 = { line : from, ch : 0};
+						from2 = { line : from - 1, ch : 0};
 						to2 = { line : to, ch : 0};
 					} else if(posType == "characters") {
 						from2 = { line : line, ch : from};
@@ -2063,28 +2084,36 @@ completion.MetaTags.load = function() {
 completion.MetaTags.getCompletion = function() {
 	return completion.MetaTags.completions;
 };
-completion.SnippetsCompletion = function() { };
+completion.SnippetsCompletion = function() {
+};
 $hxClasses["completion.SnippetsCompletion"] = completion.SnippetsCompletion;
 completion.SnippetsCompletion.__name__ = ["completion","SnippetsCompletion"];
-completion.SnippetsCompletion.load = function() {
-	var options = { };
-	options.encoding = "utf8";
-	js.Node.require("fs").readFile(js.Node.require("path").join("core","config","snippets.json"),options,function(error,data) {
-		if(error == null) {
-			var templates = tjson.TJSON.parse(data);
-			var snippets = templates.snippets;
-			var _g = 0;
-			while(_g < snippets.length) {
-				var template = snippets[_g];
-				++_g;
-				CodeMirror.templatesHint.addTemplates(template,true);
-			}
-		} else Alertify.error("Can't open core/config/snippets.json");
-	});
+completion.SnippetsCompletion.get = function() {
+	if(completion.SnippetsCompletion.instance == null) completion.SnippetsCompletion.instance = new completion.SnippetsCompletion();
+	return completion.SnippetsCompletion.instance;
 };
-completion.SnippetsCompletion.getCompletion = function() {
-	var completions = CodeMirror.templatesHint.getCompletions(cm.Editor.editor);
-	return completions;
+completion.SnippetsCompletion.prototype = {
+	load: function() {
+		var options = { };
+		options.encoding = "utf8";
+		js.Node.require("fs").readFile(js.Node.require("path").join("core","config","snippets.json"),options,function(error,data) {
+			if(error == null) {
+				var templates = tjson.TJSON.parse(data);
+				var snippets = templates.snippets;
+				var _g = 0;
+				while(_g < snippets.length) {
+					var template = snippets[_g];
+					++_g;
+					CodeMirror.templatesHint.addTemplates(template,true);
+				}
+			} else Alertify.error("Can't open core/config/snippets.json");
+		});
+	}
+	,getCompletion: function() {
+		var completions = CodeMirror.templatesHint.getCompletions(cm.Editor.editor);
+		return completions;
+	}
+	,__class__: completion.SnippetsCompletion
 };
 var core = {};
 core.AnnotationRuler = function() {
@@ -2196,7 +2225,8 @@ core.Completion.prototype = {
 		var _g = this;
 		completion.Hxml.load();
 		completion.MetaTags.load();
-		completion.SnippetsCompletion.load();
+		var snippetsCompletion = completion.SnippetsCompletion.get();
+		snippetsCompletion.load();
 		this.completionActive = false;
 		cm.Editor.editor.on("endCompletion",function() {
 			_g.completionActive = false;
@@ -2246,12 +2276,15 @@ core.Completion.prototype = {
 					while(_g13 < functionDeclarations.length) {
 						var item2 = functionDeclarations[_g13];
 						++_g13;
-						var completionData = this.generateFunctionCompletionItem(item2.name,item2.params);
-						var completionItem3 = this.createCompletionItem(item2.name,null,completionData);
-						this.list.push(completionItem3);
+						if(item2.name != "") {
+							var completionData = this.generateFunctionCompletionItem(item2.name,item2.params);
+							var completionItem3 = this.createCompletionItem(item2.name,null,completionData);
+							this.list.push(completionItem3);
+						}
 					}
 				}
-				this.list = this.list.concat(completion.SnippetsCompletion.getCompletion());
+				var snippetsCompletion = completion.SnippetsCompletion.get();
+				this.list = this.list.concat(snippetsCompletion.getCompletion());
 				var classList = this.getClassList();
 				var packages = [];
 				var _g14 = 0;
@@ -2371,15 +2404,17 @@ core.Completion.prototype = {
 		var cm1 = cm.Editor.editor;
 		var cursor = cm1.getCursor();
 		var curLine = cm1.getLine(cursor.line);
-		var word = new EReg("[A-Z_0-9\\.]+$","i");
-		var importStart = cursor.ch;
-		var importEnd = importStart;
-		while(importStart > 0 && word.match(curLine.charAt(importStart - 1))) --importStart;
-		if(importStart != importEnd) {
-			var fullImport = curLine.substring(importStart,importEnd);
-			if(fullImport.indexOf(".") != -1) {
-				var topLevelClassList = this.getClassList().topLevelClassList;
-				core.ImportDefinition.searchImportByText(topLevelClassList,fullImport,{ line : cursor.line, ch : importStart},{ line : cursor.line, ch : importEnd},false);
+		if(!StringTools.startsWith(curLine,"import ")) {
+			var word = new EReg("[A-Z_0-9\\.]+$","i");
+			var importStart = cursor.ch;
+			var importEnd = importStart;
+			while(importStart > 0 && word.match(curLine.charAt(importStart - 1))) --importStart;
+			if(importStart != importEnd) {
+				var fullImport = curLine.substring(importStart,importEnd);
+				if(fullImport.indexOf(".") != -1) {
+					var topLevelClassList = this.getClassList().topLevelClassList;
+					core.ImportDefinition.searchImportByText(topLevelClassList,fullImport,{ line : cursor.line, ch : importStart},{ line : cursor.line, ch : importEnd},false);
+				}
 			}
 		}
 	}
@@ -3009,12 +3044,14 @@ core.GoToLine.prototype = {
 		var tabManagerInstance = tabmanager.TabManager.get();
 		if(tabManagerInstance.selectedPath != null) Alertify.prompt("Go to Line",function(e,str) {
 			var cm2 = cm.Editor.editor;
-			var lineNumber = Std.parseInt(str);
+			var lineNumber = Std.parseInt(str) - 1;
 			cm2.centerOnLine(lineNumber);
 			var highlightRange = cm.HighlightRange.get();
 			var from = { line : lineNumber, ch : 0};
 			var to = { line : lineNumber, ch : cm2.getLine(lineNumber).length};
 			highlightRange.highlight(cm2,from,to);
+			cm2.setCursor({ line : lineNumber, ch : 0});
+			cm2.focus();
 		});
 	}
 	,__class__: core.GoToLine
@@ -3026,7 +3063,7 @@ core.HaxeHelper.getArguments = function(onComplete) {
 	if(core.HaxeHelper.haxeArguments != null) onComplete(core.HaxeHelper.haxeArguments); else {
 		var data = [];
 		var processHelper = core.ProcessHelper.get();
-		processHelper.runProcess("haxe",["--help"],null,function(stdout,stderr) {
+		processHelper.runProcess(core.HaxeHelper.getPathToHaxe(),["--help"],null,function(stdout,stderr) {
 			var regex = new EReg("-+[A-Z-]+ ","gim");
 			regex.map(stderr,function(ereg) {
 				var str = ereg.matched(0);
@@ -3042,7 +3079,7 @@ core.HaxeHelper.getDefines = function(onComplete) {
 	if(core.HaxeHelper.haxeDefines != null) onComplete(core.HaxeHelper.haxeDefines); else {
 		var processHelper = core.ProcessHelper.get();
 		var data = [];
-		processHelper.runProcess("haxe",["--help-defines"],null,function(stdout,stderr) {
+		processHelper.runProcess(core.HaxeHelper.getPathToHaxe(),["--help-defines"],null,function(stdout,stderr) {
 			var regex = new EReg("[A-Z-]+ +:","gim");
 			regex.map(stdout,function(ereg) {
 				var str = ereg.matched(0);
@@ -3058,7 +3095,7 @@ core.HaxeHelper.getInstalledHaxelibList = function(onComplete) {
 	if(core.HaxeHelper.installedHaxelibs != null) onComplete(core.HaxeHelper.installedHaxelibs); else {
 		var processHelper = core.ProcessHelper.get();
 		var data = [];
-		processHelper.runProcess("haxelib",["list"],null,function(stdout,stderr) {
+		processHelper.runProcess(core.HaxeHelper.getPathToHaxelib(),["list"],null,function(stdout,stderr) {
 			var regex = new EReg("^[A-Z-]+:","gim");
 			regex.map(stdout,function(ereg) {
 				var str = ereg.matched(0);
@@ -3074,7 +3111,7 @@ core.HaxeHelper.getHaxelibList = function(onComplete) {
 	if(core.HaxeHelper.haxelibHaxelibs != null) onComplete(core.HaxeHelper.haxelibHaxelibs); else {
 		var processHelper = core.ProcessHelper.get();
 		var data = [];
-		processHelper.runProcess("haxelib",["search","\"\""],null,function(stdout,stderr) {
+		processHelper.runProcess(core.HaxeHelper.getPathToHaxelib(),["search","\"\""],null,function(stdout,stderr) {
 			var lines = stdout.split("\n");
 			var _g = 0;
 			while(_g < lines.length) {
@@ -3089,11 +3126,20 @@ core.HaxeHelper.getHaxelibList = function(onComplete) {
 	}
 };
 core.HaxeHelper.getPathToHaxe = function() {
-	var pathToHaxe = "haxe";
+	return core.HaxeHelper.pathToHaxe;
+};
+core.HaxeHelper.getPathToHaxelib = function() {
+	return core.HaxeHelper.pathToHaxelib;
+};
+core.HaxeHelper.updatePathToHaxe = function() {
+	core.HaxeHelper.pathToHaxe = "haxe";
+	core.HaxeHelper.pathToHaxelib = "haxelib";
 	var classpathWalker = parser.ClasspathWalker.get();
 	var pathToHaxeDirectory = classpathWalker.pathToHaxe;
-	if(pathToHaxeDirectory != null) pathToHaxe = js.Node.require("path").join(pathToHaxeDirectory,pathToHaxe);
-	return pathToHaxe;
+	if(pathToHaxeDirectory != null) {
+		core.HaxeHelper.pathToHaxe = js.Node.require("path").join(pathToHaxeDirectory,core.HaxeHelper.pathToHaxe);
+		core.HaxeHelper.pathToHaxelib = js.Node.require("path").join(pathToHaxeDirectory,core.HaxeHelper.pathToHaxelib);
+	}
 };
 var haxe = {};
 haxe.ds = {};
@@ -3506,7 +3552,7 @@ core.HaxeParserProvider.parse = function(data,path) {
 				case 2:
 					message += "Duplicate Default";
 					break;
-				case 3:
+				case 4:
 					var s = _g[2];
 					message += s;
 					break;
@@ -3547,7 +3593,7 @@ core.HaxeServer.check = function() {
 core.HaxeServer.start = function() {
 	console.log("Starting new Haxe server at localhost:5000");
 	var processHelper = core.ProcessHelper.get();
-	core.HaxeServer.haxeServer = processHelper.runPersistentProcess("haxe",["--wait","5000"],null,function(code,stdout,stderr) {
+	core.HaxeServer.haxeServer = processHelper.runPersistentProcess(core.HaxeHelper.getPathToHaxe(),["--wait","5000"],null,function(code,stdout,stderr) {
 		console.log(stdout);
 		console.log(stderr);
 	});
@@ -3581,19 +3627,15 @@ core.Hotkeys.prepare = function() {
 	console.log("Hotkeys adjusted for Mac OS X " + Std.string(core.Hotkeys.commandKey));
 	core.Hotkeys.pathToData = js.Node.require("path").join(watchers.SettingsWatcher.pathToFolder,"hotkeys.json");
 	core.Hotkeys.parseData();
-	var options = { };
-	options.interval = 1500;
-	js.Node.require("fs").watchFile(core.Hotkeys.pathToData,options,function(curr,prev) {
-		if(curr.mtime != prev.mtime) {
-			core.Hotkeys.parseData();
-			core.Hotkeys.hotkeys = new Array();
-			var $it0 = core.Hotkeys.commandMap.keys();
-			while( $it0.hasNext() ) {
-				var key = $it0.next();
-				core.Hotkeys.addHotkey(key);
-			}
+	watchers.Watcher.watchFileForUpdates(core.Hotkeys.pathToData,function() {
+		core.Hotkeys.parseData();
+		core.Hotkeys.hotkeys = new Array();
+		var $it0 = core.Hotkeys.commandMap.keys();
+		while( $it0.hasNext() ) {
+			var key = $it0.next();
+			core.Hotkeys.addHotkey(key);
 		}
-	});
+	},1500);
 	window.addEventListener("keydown",function(e) {
 		var _g = 0;
 		var _g1 = core.Hotkeys.hotkeys;
@@ -3724,6 +3766,12 @@ core.Hotkeys.parseHotkey = function(hotkey) {
 			break;
 		case "+":
 			keyCode = 187;
+			break;
+		case "pageup":
+			keyCode = 33;
+			break;
+		case "pagedown":
+			keyCode = 34;
 			break;
 		case "":
 			keyCode = 189;
@@ -4062,6 +4110,7 @@ core.MenuCommands.add = function() {
 	core.Hotkeys.add("Tab Manager->Show Next Tab","Ctrl-Tab",null,$bind(tabManagerInstance,tabManagerInstance.showNextTab));
 	core.Hotkeys.add("Tab Manager->Show Previous Tab","Ctrl-Shift-Tab",null,$bind(tabManagerInstance,tabManagerInstance.showPreviousTab));
 	core.Hotkeys.add("Tab Manager->Close File","Ctrl-W",null,$bind(tabManagerInstance,tabManagerInstance.closeActiveTab));
+	core.Hotkeys.add("Tab Manager->Close All","Ctrl-Shift-W",null,$bind(tabManagerInstance,tabManagerInstance.closeAll));
 	menu.BootstrapMenu.getMenu("File",1).addMenuItem("New Project...",1,newprojectdialog.NewProjectDialog.show,"Ctrl-Shift-N");
 	menu.BootstrapMenu.getMenu("File").addMenuItem("New File...",2,$bind(tabManagerInstance,tabManagerInstance.createFileInNewTab),"Ctrl-N");
 	menu.BootstrapMenu.getMenu("File").addSeparator();
@@ -4113,7 +4162,7 @@ core.MenuCommands.add = function() {
 			return f7(a17);
 		};
 	})($bind(tabManagerInstance,tabManagerInstance.openFileInNewTab),js.Node.require("path").join(watchers.SettingsWatcher.pathToFolder,"snippets.json")));
-	menu.BootstrapMenu.getMenu("Options").addMenuItem("Configure Haxe SDK",100,$bind(classpathWalker,classpathWalker.showHaxeDirectoryDialog));
+	menu.BootstrapMenu.getMenu("Options").addMenuItem("Configure Haxe toolkit",100,$bind(classpathWalker,classpathWalker.showHaxeDirectoryDialog));
 	menu.BootstrapMenu.getMenu("Edit",2).addMenuItem("Undo",1,function() {
 		return cm.Editor.editor.execCommand("undo");
 	});
@@ -4169,6 +4218,8 @@ core.MenuCommands.add = function() {
 };
 core.OutlinePanel = function() {
 	this.source = [];
+	this.useSorting = false;
+	this.addSortButton();
 };
 $hxClasses["core.OutlinePanel"] = core.OutlinePanel;
 core.OutlinePanel.__name__ = ["core","OutlinePanel"];
@@ -4177,7 +4228,24 @@ core.OutlinePanel.get = function() {
 	return core.OutlinePanel.instance;
 };
 core.OutlinePanel.prototype = {
-	source: null
+	useSorting: null
+	,sortButton: null
+	,outlineOptionsPanel: null
+	,addSortButton: function() {
+		var _g = this;
+		this.outlineOptionsPanel = window.document.createElement("div");
+		this.outlineOptionsPanel.setAttribute("class","panelOptionsBar");
+		this.outlineOptionsPanel.setAttribute("id","outlineOptionsPanel");
+		this.sortButton = bootstrap.ButtonManager.get().createButton("Sort");
+		this.sortButton.classList.add("panelOptionsButton");
+		this.sortButton.onclick = function(e) {
+			e.stopPropagation();
+			e.preventDefault();
+			if(_g.useSorting) _g.useSorting = false; else _g.useSorting = true;
+			core.HaxeLint.updateLinting();
+		};
+	}
+	,source: null
 	,update: function() {
 		new $("#outline").jqxTree({ source : this.source});
 		new $("#outline").dblclick(function(event) {
@@ -4195,6 +4263,8 @@ core.OutlinePanel.prototype = {
 				highlightRange.highlight(cm2,pos,pos2);
 			}
 		});
+		new $("#paneloutlineverticalScrollBar").before(this.outlineOptionsPanel);
+		new $("#outlineOptionsPanel").append(this.sortButton);
 	}
 	,addField: function(item) {
 		this.source.push(item);
@@ -4299,11 +4369,16 @@ core.ProcessHelper.prototype = {
 		textarea = js.Boot.__cast(window.document.getElementById("outputTextArea") , HTMLTextAreaElement);
 		textarea.value = "Build started\n";
 		textarea.value += command + "\n";
-		new $("#errors").html("");
+		this.clearErrors();
 		var process1 = this.runPersistentProcess(process,params,cwd,function(code,stdout,stderr) {
 			_g.processOutput(code,_g.processStdout,_g.processStderr,onComplete);
 		});
 		return process1;
+	}
+	,clearErrors: function() {
+		var div;
+		div = js.Boot.__cast(window.document.getElementById("errors") , HTMLDivElement);
+		while(div.lastChild != null) div.removeChild(div.lastChild);
 	}
 	,processOutput: function(code,stdout,stderr,onComplete) {
 		var textarea;
@@ -5363,17 +5438,29 @@ filetree.FileTree.get = function() {
 	return filetree.FileTree.instance;
 };
 filetree.FileTree.updateProjectMainHxml = function() {
-	var noproject = projectaccess.ProjectAccess.path == null || projectaccess.ProjectAccess.currentProject.main == null;
+	var project = projectaccess.ProjectAccess.currentProject;
+	var noproject = projectaccess.ProjectAccess.path == null;
 	var main = null;
-	if(!noproject) main = js.Node.require("path").resolve(projectaccess.ProjectAccess.path,projectaccess.ProjectAccess.currentProject.main);
+	var _g = project.type;
+	switch(_g) {
+	case 0:
+		if(!noproject) main = js.Node.require("path").resolve(projectaccess.ProjectAccess.path,project.targetData[project.target].pathToHxml);
+		break;
+	case 2:
+		if(!noproject && project.main != null) main = js.Node.require("path").resolve(projectaccess.ProjectAccess.path,project.main);
+		break;
+	case 1:
+		break;
+	default:
+	}
 	var items = new $("#filetree").jqxTree("getItems");
-	var _g = 0;
-	while(_g < items.length) {
-		var item = items[_g];
-		++_g;
+	var _g1 = 0;
+	while(_g1 < items.length) {
+		var item = items[_g1];
+		++_g1;
 		var li;
 		li = js.Boot.__cast(item.element , HTMLLIElement);
-		if(!noproject && item.value.path == main) li.classList.add("mainHxml"); else li.classList.remove("mainHxml");
+		if(!noproject && main != null && item.value.path == main) li.classList.add("mainHxml"); else li.classList.remove("mainHxml");
 	}
 };
 filetree.FileTree.readDirItems = function(path,onComplete,root) {
@@ -5463,7 +5550,7 @@ filetree.FileTree.prototype = {
 						var pathToFolder = js.Node.require("path").join(path1,dirname);
 						js.Node.require("fs").mkdir(pathToFolder,null,function(error) {
 							if(error == null) {
-								new $("#filetree").jqxTree("addTo",{ label : str1, value : { type : "folder", path : pathToFolder}, icon : "includes/images/folder.png"},selectedItem1.element);
+								new $("#filetree").jqxTree("addTo",{ label : str1, value : { type : "folder", path : pathToFolder}},selectedItem1.element);
 								_g.attachContextMenu();
 							} else Alertify.error(error);
 						});
@@ -5471,11 +5558,11 @@ filetree.FileTree.prototype = {
 				}
 			},"New Folder");
 		});
-		this.appendToContextMenu("Open Item",function(selectedItem2) {
+		this.appendToContextMenu("Edit",function(selectedItem2) {
 			var tabManager1 = tabmanager.TabManager.get();
 			if(selectedItem2.value.type == "file") tabManager1.openFileInNewTab(selectedItem2.value.path); else new $("#filetree").jqxTree("expandItem",selectedItem2.element);
 		});
-		this.appendToContextMenu("Open using OS",function(selectedItem3) {
+		this.appendToContextMenu("Execute",function(selectedItem3) {
 			nodejs.webkit.Shell.openItem(selectedItem3.value.path);
 		});
 		this.appendToContextMenu("Show Item In Folder",function(selectedItem4) {
@@ -5519,7 +5606,7 @@ filetree.FileTree.prototype = {
 			default:
 			}
 		});
-		this.appendToContextMenu("Toggle Hidden Items Visibility",function(selectedItem7) {
+		this.appendToContextMenu("Hide/Unhide All",function(selectedItem7) {
 			if(projectaccess.ProjectAccess.path != null) {
 				projectaccess.ProjectAccess.currentProject.showHiddenItems = !projectaccess.ProjectAccess.currentProject.showHiddenItems;
 				Alertify.success(watchers.LocaleWatcher.getStringSync("Hidden Items Visible: ") + Std.string(projectaccess.ProjectAccess.currentProject.showHiddenItems));
@@ -5527,22 +5614,22 @@ filetree.FileTree.prototype = {
 			}
 			_g.load();
 		});
-		this.appendToContextMenu("Toggle Item Visibility",function(selectedItem8) {
+		this.appendToContextMenu("Hide/Unhide",function(selectedItem8) {
 			if(projectaccess.ProjectAccess.path != null) {
-				var relativePath = js.Node.require("path").relative(projectaccess.ProjectAccess.path,selectedItem8.value.path);
-				if(HxOverrides.indexOf(projectaccess.ProjectAccess.currentProject.hiddenItems,relativePath,0) == -1) {
-					projectaccess.ProjectAccess.currentProject.hiddenItems.push(relativePath);
+				var path4 = selectedItem8.value.path;
+				if(!projectaccess.ProjectAccess.isItemHidden(path4)) {
+					projectaccess.ProjectAccess.hideItem(path4);
 					new $("#filetree").jqxTree("removeItem",selectedItem8.element);
 					_g.attachContextMenu();
 				} else {
-					HxOverrides.remove(projectaccess.ProjectAccess.currentProject.hiddenItems,relativePath);
+					projectaccess.ProjectAccess.unhideItem(path4);
 					_g.load();
 				}
 			} else new $("#filetree").jqxTree("removeItem",selectedItem8.element);
 		});
 		this.appendToContextMenu("Set As Compile Main",function(selectedItem9) {
-			var path4 = selectedItem9.value.path;
-			if(core.RunProject.setHxmlAsProjectBuildFile(path4)) {
+			var path5 = selectedItem9.value.path;
+			if(core.RunProject.setHxmlAsProjectBuildFile(path5)) {
 			}
 		});
 		this.contextMenu = new $("#jqxMenu").jqxMenu({ autoOpenPopup : false, mode : "popup"});
@@ -5552,37 +5639,42 @@ filetree.FileTree.prototype = {
 			return true;
 		});
 		new $("#jqxMenu").on("itemclick",null,function(event) {
-			var item = $.trim(new $(event.args).text());
-			(_g.contextMenuCommandsMap.get(item))();
+			var item = Lambda.find(_g.contextMenuCommandsMap,function(contextMenuItem) {
+				return event.args == contextMenuItem.element;
+			});
+			item.cb();
 		});
 		new $("#filetree").dblclick(function(event1) {
 			var item1 = new $("#filetree").jqxTree("getSelectedItem");
-			if(item1.value.type == "file") {
-				var tabManager2 = tabmanager.TabManager.get();
-				tabManager2.openFileInNewTab(item1.value.path);
+			if(item1 != null) {
+				var value = item1.value;
+				if(value != null && value.type == "file") {
+					var tabManager2 = tabmanager.TabManager.get();
+					tabManager2.openFileInNewTab(item1.value.path);
+				}
 			}
 		});
 		new $("#filetree").bind("dragEnd",function(event2) {
 			var target = event2.args.originalEvent.target;
 			var targetParents = new $(target).parents();
 			var item2 = null;
-			$.each(new $("#filetree").jqxTree("getItems"),function(index,value) {
-				if(value.label == event2.args.label && value.value == event2.args.value) {
-					item2 = value;
+			$.each(new $("#filetree").jqxTree("getItems"),function(index,value1) {
+				if(value1.label == event2.args.label && value1.value == event2.args.value) {
+					item2 = value1;
 					return false;
 				}
 			});
 			if(item2) {
 				var parents = new $(item2.element).parents("li");
-				var path5 = "";
-				$.each(parents,function(index1,value1) {
-					var item3 = new $("#filetree").jqxTree("getItem",value1);
-					if(item3.level > 0) path5 = item3.label + "/" + path5;
+				var path6 = "";
+				$.each(parents,function(index1,value2) {
+					var item3 = new $("#filetree").jqxTree("getItem",value2);
+					if(item3.level > 0) path6 = item3.label + "/" + path6;
 				});
 				var topDirectory = new $("#filetree").jqxTree("getItems")[0].value.path;
 				var selectedItem10 = new $("#filetree").jqxTree("getSelectedItem");
 				var previousPath = selectedItem10.value.path;
-				var newPath = js.Node.require("path").join(topDirectory,path5,selectedItem10.label);
+				var newPath = js.Node.require("path").join(topDirectory,path6,selectedItem10.label);
 				js.node.Mv.move(previousPath,newPath,function(error4) {
 					if(error4 == null) {
 						Alertify.success("File were successfully moved to " + newPath);
@@ -5602,10 +5694,13 @@ filetree.FileTree.prototype = {
 		li = _this.createElement("li");
 		li.textContent = name;
 		new $("#filetreemenu").append(li);
-		this.contextMenuCommandsMap.set(name,function() {
+		var contextMenuItem = { };
+		contextMenuItem.cb = function() {
 			var selectedItem = new $("#filetree").jqxTree("getSelectedItem");
 			if(selectedItem != null) onClick(selectedItem);
-		});
+		};
+		contextMenuItem.element = li;
+		this.contextMenuCommandsMap.set(name,contextMenuItem);
 	}
 	,attachContextMenu: function() {
 		var _g = this;
@@ -5616,6 +5711,18 @@ filetree.FileTree.prototype = {
 				new $("#filetree").jqxTree("selectItem",target);
 				var scrollTop = new $(window).scrollTop();
 				var scrollLeft = new $(window).scrollLeft();
+				var selectedItem = new $("#filetree").jqxTree("getSelectedItem");
+				var extname = js.Node.require("path").extname(selectedItem.value.path);
+				var editElement = _g.contextMenuCommandsMap.get("Edit").element;
+				if(selectedItem.value.type == "file") editElement.textContent = "Edit"; else if(selectedItem.value.type == "folder") editElement.textContent = "Open Folder";
+				var setAsCompileMainelement = _g.contextMenuCommandsMap.get("Set As Compile Main").element;
+				if(extname != ".hxml") new $(setAsCompileMainelement).hide(); else new $(setAsCompileMainelement).show();
+				if(projectaccess.ProjectAccess.path != null) {
+					var hideUnhideItemElement = _g.contextMenuCommandsMap.get("Hide/Unhide").element;
+					if(!projectaccess.ProjectAccess.isItemHidden(selectedItem.value.path)) hideUnhideItemElement.textContent = "Hide"; else hideUnhideItemElement.textContent = "Unhide";
+					var showHiddenItemsElement = _g.contextMenuCommandsMap.get("Hide/Unhide All").element;
+					if(projectaccess.ProjectAccess.currentProject.showHiddenItems) showHiddenItemsElement.textContent = "Hide All"; else showHiddenItemsElement.textContent = "Unhide All";
+				}
 				_g.contextMenu.jqxMenu("open",Std.parseInt(event.clientX) + 5 + scrollLeft,Std.parseInt(event.clientY) + 5 + scrollTop);
 				return false;
 			} else return true;
@@ -5984,6 +6091,384 @@ haxe.Serializer.prototype = {
 		}
 	}
 	,__class__: haxe.Serializer
+};
+haxe._Template = {};
+haxe._Template.TemplateExpr = $hxClasses["haxe._Template.TemplateExpr"] = { __ename__ : ["haxe","_Template","TemplateExpr"], __constructs__ : ["OpVar","OpExpr","OpIf","OpStr","OpBlock","OpForeach","OpMacro"] };
+haxe._Template.TemplateExpr.OpVar = function(v) { var $x = ["OpVar",0,v]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpExpr = function(expr) { var $x = ["OpExpr",1,expr]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpIf = function(expr,eif,eelse) { var $x = ["OpIf",2,expr,eif,eelse]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpStr = function(str) { var $x = ["OpStr",3,str]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpBlock = function(l) { var $x = ["OpBlock",4,l]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpForeach = function(expr,loop) { var $x = ["OpForeach",5,expr,loop]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe._Template.TemplateExpr.OpMacro = function(name,params) { var $x = ["OpMacro",6,name,params]; $x.__enum__ = haxe._Template.TemplateExpr; $x.toString = $estr; return $x; };
+haxe.Template = function(str) {
+	var tokens = this.parseTokens(str);
+	this.expr = this.parseBlock(tokens);
+	if(!tokens.isEmpty()) throw "Unexpected '" + Std.string(tokens.first().s) + "'";
+};
+$hxClasses["haxe.Template"] = haxe.Template;
+haxe.Template.__name__ = ["haxe","Template"];
+haxe.Template.prototype = {
+	expr: null
+	,context: null
+	,macros: null
+	,stack: null
+	,buf: null
+	,execute: function(context,macros) {
+		if(macros == null) this.macros = { }; else this.macros = macros;
+		this.context = context;
+		this.stack = new List();
+		this.buf = new StringBuf();
+		this.run(this.expr);
+		return this.buf.b;
+	}
+	,resolve: function(v) {
+		if(Object.prototype.hasOwnProperty.call(this.context,v)) return Reflect.field(this.context,v);
+		var $it0 = this.stack.iterator();
+		while( $it0.hasNext() ) {
+			var ctx = $it0.next();
+			if(Object.prototype.hasOwnProperty.call(ctx,v)) return Reflect.field(ctx,v);
+		}
+		if(v == "__current__") return this.context;
+		return Reflect.field(haxe.Template.globals,v);
+	}
+	,parseTokens: function(data) {
+		var tokens = new List();
+		while(haxe.Template.splitter.match(data)) {
+			var p = haxe.Template.splitter.matchedPos();
+			if(p.pos > 0) tokens.add({ p : HxOverrides.substr(data,0,p.pos), s : true, l : null});
+			if(HxOverrides.cca(data,p.pos) == 58) {
+				tokens.add({ p : HxOverrides.substr(data,p.pos + 2,p.len - 4), s : false, l : null});
+				data = haxe.Template.splitter.matchedRight();
+				continue;
+			}
+			var parp = p.pos + p.len;
+			var npar = 1;
+			var params = [];
+			var part = "";
+			while(true) {
+				var c = HxOverrides.cca(data,parp);
+				parp++;
+				if(c == 40) npar++; else if(c == 41) {
+					npar--;
+					if(npar <= 0) break;
+				} else if(c == null) throw "Unclosed macro parenthesis";
+				if(c == 44 && npar == 1) {
+					params.push(part);
+					part = "";
+				} else part += String.fromCharCode(c);
+			}
+			params.push(part);
+			tokens.add({ p : haxe.Template.splitter.matched(2), s : false, l : params});
+			data = HxOverrides.substr(data,parp,data.length - parp);
+		}
+		if(data.length > 0) tokens.add({ p : data, s : true, l : null});
+		return tokens;
+	}
+	,parseBlock: function(tokens) {
+		var l = new List();
+		while(true) {
+			var t = tokens.first();
+			if(t == null) break;
+			if(!t.s && (t.p == "end" || t.p == "else" || HxOverrides.substr(t.p,0,7) == "elseif ")) break;
+			l.add(this.parse(tokens));
+		}
+		if(l.length == 1) return l.first();
+		return haxe._Template.TemplateExpr.OpBlock(l);
+	}
+	,parse: function(tokens) {
+		var t = tokens.pop();
+		var p = t.p;
+		if(t.s) return haxe._Template.TemplateExpr.OpStr(p);
+		if(t.l != null) {
+			var pe = new List();
+			var _g = 0;
+			var _g1 = t.l;
+			while(_g < _g1.length) {
+				var p1 = _g1[_g];
+				++_g;
+				pe.add(this.parseBlock(this.parseTokens(p1)));
+			}
+			return haxe._Template.TemplateExpr.OpMacro(p,pe);
+		}
+		if(HxOverrides.substr(p,0,3) == "if ") {
+			p = HxOverrides.substr(p,3,p.length - 3);
+			var e = this.parseExpr(p);
+			var eif = this.parseBlock(tokens);
+			var t1 = tokens.first();
+			var eelse;
+			if(t1 == null) throw "Unclosed 'if'";
+			if(t1.p == "end") {
+				tokens.pop();
+				eelse = null;
+			} else if(t1.p == "else") {
+				tokens.pop();
+				eelse = this.parseBlock(tokens);
+				t1 = tokens.pop();
+				if(t1 == null || t1.p != "end") throw "Unclosed 'else'";
+			} else {
+				t1.p = HxOverrides.substr(t1.p,4,t1.p.length - 4);
+				eelse = this.parse(tokens);
+			}
+			return haxe._Template.TemplateExpr.OpIf(e,eif,eelse);
+		}
+		if(HxOverrides.substr(p,0,8) == "foreach ") {
+			p = HxOverrides.substr(p,8,p.length - 8);
+			var e1 = this.parseExpr(p);
+			var efor = this.parseBlock(tokens);
+			var t2 = tokens.pop();
+			if(t2 == null || t2.p != "end") throw "Unclosed 'foreach'";
+			return haxe._Template.TemplateExpr.OpForeach(e1,efor);
+		}
+		if(haxe.Template.expr_splitter.match(p)) return haxe._Template.TemplateExpr.OpExpr(this.parseExpr(p));
+		return haxe._Template.TemplateExpr.OpVar(p);
+	}
+	,parseExpr: function(data) {
+		var l = new List();
+		var expr = data;
+		while(haxe.Template.expr_splitter.match(data)) {
+			var p = haxe.Template.expr_splitter.matchedPos();
+			var k = p.pos + p.len;
+			if(p.pos != 0) l.add({ p : HxOverrides.substr(data,0,p.pos), s : true});
+			var p1 = haxe.Template.expr_splitter.matched(0);
+			l.add({ p : p1, s : p1.indexOf("\"") >= 0});
+			data = haxe.Template.expr_splitter.matchedRight();
+		}
+		if(data.length != 0) l.add({ p : data, s : true});
+		var e;
+		try {
+			e = this.makeExpr(l);
+			if(!l.isEmpty()) throw l.first().p;
+		} catch( s ) {
+			if( js.Boot.__instanceof(s,String) ) {
+				throw "Unexpected '" + s + "' in " + expr;
+			} else throw(s);
+		}
+		return function() {
+			try {
+				return e();
+			} catch( exc ) {
+				throw "Error : " + Std.string(exc) + " in " + expr;
+			}
+		};
+	}
+	,makeConst: function(v) {
+		haxe.Template.expr_trim.match(v);
+		v = haxe.Template.expr_trim.matched(1);
+		if(HxOverrides.cca(v,0) == 34) {
+			var str = HxOverrides.substr(v,1,v.length - 2);
+			return function() {
+				return str;
+			};
+		}
+		if(haxe.Template.expr_int.match(v)) {
+			var i = Std.parseInt(v);
+			return function() {
+				return i;
+			};
+		}
+		if(haxe.Template.expr_float.match(v)) {
+			var f = Std.parseFloat(v);
+			return function() {
+				return f;
+			};
+		}
+		var me = this;
+		return function() {
+			return me.resolve(v);
+		};
+	}
+	,makePath: function(e,l) {
+		var p = l.first();
+		if(p == null || p.p != ".") return e;
+		l.pop();
+		var field = l.pop();
+		if(field == null || !field.s) throw field.p;
+		var f = field.p;
+		haxe.Template.expr_trim.match(f);
+		f = haxe.Template.expr_trim.matched(1);
+		return this.makePath(function() {
+			return Reflect.field(e(),f);
+		},l);
+	}
+	,makeExpr: function(l) {
+		return this.makePath(this.makeExpr2(l),l);
+	}
+	,makeExpr2: function(l) {
+		var p = l.pop();
+		if(p == null) throw "<eof>";
+		if(p.s) return this.makeConst(p.p);
+		var _g = p.p;
+		switch(_g) {
+		case "(":
+			var e1 = this.makeExpr(l);
+			var p1 = l.pop();
+			if(p1 == null || p1.s) throw p1.p;
+			if(p1.p == ")") return e1;
+			var e2 = this.makeExpr(l);
+			var p2 = l.pop();
+			if(p2 == null || p2.p != ")") throw p2.p;
+			var _g1 = p1.p;
+			switch(_g1) {
+			case "+":
+				return function() {
+					return e1() + e2();
+				};
+			case "-":
+				return function() {
+					return e1() - e2();
+				};
+			case "*":
+				return function() {
+					return e1() * e2();
+				};
+			case "/":
+				return function() {
+					return e1() / e2();
+				};
+			case ">":
+				return function() {
+					return e1() > e2();
+				};
+			case "<":
+				return function() {
+					return e1() < e2();
+				};
+			case ">=":
+				return function() {
+					return e1() >= e2();
+				};
+			case "<=":
+				return function() {
+					return e1() <= e2();
+				};
+			case "==":
+				return function() {
+					return e1() == e2();
+				};
+			case "!=":
+				return function() {
+					return e1() != e2();
+				};
+			case "&&":
+				return function() {
+					return e1() && e2();
+				};
+			case "||":
+				return function() {
+					return e1() || e2();
+				};
+			default:
+				throw "Unknown operation " + p1.p;
+			}
+			break;
+		case "!":
+			var e = this.makeExpr(l);
+			return function() {
+				var v = e();
+				return v == null || v == false;
+			};
+		case "-":
+			var e3 = this.makeExpr(l);
+			return function() {
+				return -e3();
+			};
+		}
+		throw p.p;
+	}
+	,run: function(e) {
+		switch(e[1]) {
+		case 0:
+			var v = e[2];
+			this.buf.add(Std.string(this.resolve(v)));
+			break;
+		case 1:
+			var e1 = e[2];
+			this.buf.add(Std.string(e1()));
+			break;
+		case 2:
+			var eelse = e[4];
+			var eif = e[3];
+			var e2 = e[2];
+			var v1 = e2();
+			if(v1 == null || v1 == false) {
+				if(eelse != null) this.run(eelse);
+			} else this.run(eif);
+			break;
+		case 3:
+			var str = e[2];
+			if(str == null) this.buf.b += "null"; else this.buf.b += "" + str;
+			break;
+		case 4:
+			var l = e[2];
+			var $it0 = l.iterator();
+			while( $it0.hasNext() ) {
+				var e3 = $it0.next();
+				this.run(e3);
+			}
+			break;
+		case 5:
+			var loop = e[3];
+			var e4 = e[2];
+			var v2 = e4();
+			try {
+				var x = $iterator(v2)();
+				if(x.hasNext == null) throw null;
+				v2 = x;
+			} catch( e5 ) {
+				try {
+					if(v2.hasNext == null) throw null;
+				} catch( e6 ) {
+					throw "Cannot iter on " + Std.string(v2);
+				}
+			}
+			this.stack.push(this.context);
+			var v3 = v2;
+			while( v3.hasNext() ) {
+				var ctx = v3.next();
+				this.context = ctx;
+				this.run(loop);
+			}
+			this.context = this.stack.pop();
+			break;
+		case 6:
+			var params = e[3];
+			var m = e[2];
+			var v4 = Reflect.field(this.macros,m);
+			var pl = new Array();
+			var old = this.buf;
+			pl.push($bind(this,this.resolve));
+			var $it1 = params.iterator();
+			while( $it1.hasNext() ) {
+				var p = $it1.next();
+				switch(p[1]) {
+				case 0:
+					var v5 = p[2];
+					pl.push(this.resolve(v5));
+					break;
+				default:
+					this.buf = new StringBuf();
+					this.run(p);
+					pl.push(this.buf.b);
+				}
+			}
+			this.buf = old;
+			try {
+				this.buf.add(Std.string(v4.apply(this.macros,pl)));
+			} catch( e7 ) {
+				var plstr;
+				try {
+					plstr = pl.join(",");
+				} catch( e8 ) {
+					plstr = "???";
+				}
+				var msg = "Macro call " + m + "(" + plstr + ") failed (" + Std.string(e7) + ")";
+				throw msg;
+			}
+			break;
+		}
+	}
+	,__class__: haxe.Template
 };
 haxe.Timer = function(time_ms) {
 	var me = this;
@@ -7199,7 +7684,6 @@ haxe.xml.Fast.prototype = {
 		}};
 	}
 	,__class__: haxe.xml.Fast
-	,__properties__: {get_elements:"get_elements",get_innerHTML:"get_innerHTML",get_innerData:"get_innerData",get_name:"get_name"}
 };
 haxe.xml.Parser = function() { };
 $hxClasses["haxe.xml.Parser"] = haxe.xml.Parser;
@@ -8496,7 +8980,7 @@ haxeparser.HaxeLexer.__super__ = hxparse.Lexer;
 haxeparser.HaxeLexer.prototype = $extend(hxparse.Lexer.prototype,{
 	__class__: haxeparser.HaxeLexer
 });
-haxeparser.ParserErrorMsg = $hxClasses["haxeparser.ParserErrorMsg"] = { __ename__ : ["haxeparser","ParserErrorMsg"], __constructs__ : ["MissingSemicolon","MissingType","DuplicateDefault","Custom"] };
+haxeparser.ParserErrorMsg = $hxClasses["haxeparser.ParserErrorMsg"] = { __ename__ : ["haxeparser","ParserErrorMsg"], __constructs__ : ["MissingSemicolon","MissingType","DuplicateDefault","UnclosedMacro","Custom"] };
 haxeparser.ParserErrorMsg.MissingSemicolon = ["MissingSemicolon",0];
 haxeparser.ParserErrorMsg.MissingSemicolon.toString = $estr;
 haxeparser.ParserErrorMsg.MissingSemicolon.__enum__ = haxeparser.ParserErrorMsg;
@@ -8506,7 +8990,10 @@ haxeparser.ParserErrorMsg.MissingType.__enum__ = haxeparser.ParserErrorMsg;
 haxeparser.ParserErrorMsg.DuplicateDefault = ["DuplicateDefault",2];
 haxeparser.ParserErrorMsg.DuplicateDefault.toString = $estr;
 haxeparser.ParserErrorMsg.DuplicateDefault.__enum__ = haxeparser.ParserErrorMsg;
-haxeparser.ParserErrorMsg.Custom = function(s) { var $x = ["Custom",3,s]; $x.__enum__ = haxeparser.ParserErrorMsg; $x.toString = $estr; return $x; };
+haxeparser.ParserErrorMsg.UnclosedMacro = ["UnclosedMacro",3];
+haxeparser.ParserErrorMsg.UnclosedMacro.toString = $estr;
+haxeparser.ParserErrorMsg.UnclosedMacro.__enum__ = haxeparser.ParserErrorMsg;
+haxeparser.ParserErrorMsg.Custom = function(s) { var $x = ["Custom",4,s]; $x.__enum__ = haxeparser.ParserErrorMsg; $x.toString = $estr; return $x; };
 haxeparser.ParserError = function(message,pos) {
 	this.msg = message;
 	this.pos = pos;
@@ -8662,9 +9149,9 @@ haxeparser.HaxeCondParser.prototype = $extend(hxparse.Parser_hxparse_LexerTokenS
 	}
 	,__class__: haxeparser.HaxeCondParser
 });
-haxeparser.HaxeTokenSource = function(lexer,mstack,defines) {
+haxeparser.HaxeTokenSource = function(lexer,defines) {
 	this.lexer = lexer;
-	this.mstack = mstack;
+	this.mstack = [];
 	this.defines = defines;
 	this.skipstates = [0];
 	this.rawSource = new hxparse.LexerTokenSource(lexer,haxeparser.HaxeLexer.tok);
@@ -8721,6 +9208,7 @@ haxeparser.HaxeTokenSource.prototype = {
 					case "if":
 						switch(state) {
 						case 0:
+							this.mstack.push(tk.pos);
 							this.pushSt(this.enterMacro()?0:1);
 							break;
 						case 1:case 2:
@@ -8729,6 +9217,7 @@ haxeparser.HaxeTokenSource.prototype = {
 						}
 						break;
 					case "end":
+						this.mstack.pop();
 						if(this.skipstates.length > 1) this.skipstates.pop(); else throw "unexpected #end";
 						break;
 					case "elseif":
@@ -9027,11 +9516,10 @@ hxparse.Parser_haxeparser_HaxeTokenSource_haxeparser_Token.prototype = {
 };
 haxeparser.HaxeParser = function(input,sourceName) {
 	this.doResume = false;
-	this.mstack = [];
 	this.defines = new haxe.ds.StringMap();
 	this.defines.set("true",true);
 	var lexer = new haxeparser.HaxeLexer(input,sourceName);
-	var ts = new haxeparser.HaxeTokenSource(lexer,this.mstack,this.defines);
+	var ts = new haxeparser.HaxeTokenSource(lexer,this.defines);
 	hxparse.Parser_haxeparser_HaxeTokenSource_haxeparser_Token.call(this,ts);
 	this.inMacro = false;
 	this.doc = "";
@@ -9214,12 +9702,13 @@ haxeparser.HaxeParser.aadd = function(a,t) {
 haxeparser.HaxeParser.__super__ = hxparse.Parser_haxeparser_HaxeTokenSource_haxeparser_Token;
 haxeparser.HaxeParser.prototype = $extend(hxparse.Parser_haxeparser_HaxeTokenSource_haxeparser_Token.prototype,{
 	defines: null
-	,mstack: null
 	,doResume: null
 	,doc: null
 	,inMacro: null
 	,parse: function() {
-		return this.parseFile();
+		var res = this.parseFile();
+		if(this.stream.mstack.length != 0) throw new haxeparser.ParserError(haxeparser.ParserErrorMsg.UnclosedMacro,this.stream.mstack[this.stream.mstack.length - 1]);
+		return res;
 	}
 	,psep: function(sep,f) {
 		var _g = this;
@@ -11575,13 +12064,10 @@ haxeparser.HaxeParser.prototype = $extend(hxparse.Parser_haxeparser_HaxeTokenSou
 		}
 	}
 	,reify: function(inMacro) {
+		var reificator = new haxeparser._HaxeParser.Reificator(inMacro);
 		return { toExpr : function(e) {
-			return null;
-		}, toType : function(t,p) {
-			return null;
-		}, toTypeDef : function(t1) {
-			return null;
-		}};
+			return reificator.toExpr(e,e.pos);
+		}, toType : $bind(reificator,reificator.toCType), toTypeDef : $bind(reificator,reificator.toTypeDef)};
 	}
 	,reifyExpr: function(e) {
 		var toExpr = this.reify(this.inMacro).toExpr;
@@ -11608,19 +12094,29 @@ haxeparser.HaxeParser.prototype = $extend(hxparse.Parser_haxeparser_HaxeTokenSou
 					var vl = this.psep(haxeparser.TokenDef.Comma,$bind(this,this.parseVarDecl));
 					return this.reifyExpr({ expr : haxe.macro.ExprDef.EVars(vl), pos : p1});
 				default:
-					var e = this.secureExpr();
-					return this.reifyExpr(e);
+					try {
+						var d = this.parseClass([],[],false);
+						var toType1 = this.reify(this.inMacro).toTypeDef;
+						return { expr : haxe.macro.ExprDef.ECheckType(toType1(d),haxe.macro.ComplexType.TPath({ pack : ["haxe","macro"], name : "Expr", sub : "TypeDefinition", params : []})), pos : p};
+					} catch( _ ) {
+						if( js.Boot.__instanceof(_,hxparse.NoMatch) ) {
+							var e = this.secureExpr();
+							return this.reifyExpr(e);
+						} else throw(_);
+					}
 				}
 				break;
-			case 14:
-				this.last = this.token.elt;
-				this.token = this.token.next;
-				var d = this.parseClass([],[],false);
-				var toType1 = this.reify(this.inMacro).toTypeDef;
-				return { expr : haxe.macro.ExprDef.ECheckType(toType1(d),haxe.macro.ComplexType.TPath({ pack : ["haxe","macro"], name : "Expr", sub : "TypeDefinition", params : []})), pos : p};
 			default:
-				var e = this.secureExpr();
-				return this.reifyExpr(e);
+				try {
+					var d = this.parseClass([],[],false);
+					var toType1 = this.reify(this.inMacro).toTypeDef;
+					return { expr : haxe.macro.ExprDef.ECheckType(toType1(d),haxe.macro.ComplexType.TPath({ pack : ["haxe","macro"], name : "Expr", sub : "TypeDefinition", params : []})), pos : p};
+				} catch( _ ) {
+					if( js.Boot.__instanceof(_,hxparse.NoMatch) ) {
+						var e = this.secureExpr();
+						return this.reifyExpr(e);
+					} else throw(_);
+				}
 			}
 		}
 	}
@@ -13198,6 +13694,633 @@ haxeparser.HaxeParser.prototype = $extend(hxparse.Parser_haxeparser_HaxeTokenSou
 	}
 	,__class__: haxeparser.HaxeParser
 });
+haxeparser._HaxeParser = {};
+haxeparser._HaxeParser.Reificator = function(inMacro) {
+	this.curPos = null;
+	this.inMacro = inMacro;
+};
+$hxClasses["haxeparser._HaxeParser.Reificator"] = haxeparser._HaxeParser.Reificator;
+haxeparser._HaxeParser.Reificator.__name__ = ["haxeparser","_HaxeParser","Reificator"];
+haxeparser._HaxeParser.Reificator.prototype = {
+	curPos: null
+	,inMacro: null
+	,mkEnum: function(ename,name,vl,p) {
+		var constr = { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent(name)), pos : p};
+		switch(vl.length) {
+		case 0:
+			return constr;
+		default:
+			return { expr : haxe.macro.ExprDef.ECall(constr,vl), pos : p};
+		}
+	}
+	,toConst: function(c,p) {
+		var _g = this;
+		var cst = function(n,v) {
+			return _g.mkEnum("Constant",n,[{ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CString(v)), pos : p}],p);
+		};
+		switch(c[1]) {
+		case 0:
+			var i = c[2];
+			return cst("CInt",i);
+		case 2:
+			var s = c[2];
+			return cst("CString",s);
+		case 1:
+			var s1 = c[2];
+			return cst("CFloat",s1);
+		case 3:
+			var s2 = c[2];
+			return cst("CIdent",s2);
+		case 4:
+			var o = c[3];
+			var r = c[2];
+			return this.mkEnum("Constant","CRegexp",[{ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CString(r)), pos : p},{ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CString(o)), pos : p}],p);
+		}
+	}
+	,toBinop: function(o,p) {
+		var _g = this;
+		var op = function(n) {
+			return _g.mkEnum("Binop",n,[],p);
+		};
+		switch(o[1]) {
+		case 0:
+			return op("OpAdd");
+		case 1:
+			return op("OpMult");
+		case 2:
+			return op("OpDiv");
+		case 3:
+			return op("OpSub");
+		case 4:
+			return op("OpAssign");
+		case 5:
+			return op("OpEq");
+		case 6:
+			return op("OpNotEq");
+		case 7:
+			return op("OpGt");
+		case 8:
+			return op("OpGte");
+		case 9:
+			return op("OpLt");
+		case 10:
+			return op("OpLte");
+		case 11:
+			return op("OpAnd");
+		case 12:
+			return op("OpOr");
+		case 13:
+			return op("OpXor");
+		case 14:
+			return op("OpBoolAnd");
+		case 15:
+			return op("OpBoolOr");
+		case 16:
+			return op("OpShl");
+		case 17:
+			return op("OpShr");
+		case 18:
+			return op("OpUShr");
+		case 19:
+			return op("OpMod");
+		case 20:
+			var o1 = o[2];
+			return this.mkEnum("Binop","OpAssignOp",[this.toBinop(o1,p)],p);
+		case 21:
+			return op("OpInterval");
+		case 22:
+			return op("OpArrow");
+		}
+	}
+	,toString: function(s,p) {
+		var len = s.length;
+		if(len > 1 && s.charAt(0) == "$") return { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent(HxOverrides.substr(s,1,null))), pos : p}; else return { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CString(s)), pos : p};
+	}
+	,toArray: function(f,a,p) {
+		var vals = [];
+		var _g = 0;
+		while(_g < a.length) {
+			var v = a[_g];
+			++_g;
+			vals.push(f(v,p));
+		}
+		var e = { pos : p, expr : haxe.macro.ExprDef.EArrayDecl(vals)};
+		return e;
+	}
+	,toNull: function(p) {
+		return { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent("null")), pos : p};
+	}
+	,toOpt: function(f,v,p) {
+		if(v == null) return this.toNull(p); else return f(v,p);
+	}
+	,toBool: function(o,p) {
+		var s;
+		if(o) s = "true"; else s = "false";
+		return { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent(s)), pos : p};
+	}
+	,toObj: function(fields,p) {
+		return { expr : haxe.macro.ExprDef.EObjectDecl(fields), pos : p};
+	}
+	,toTParam: function(t,p) {
+		var n;
+		var v;
+		switch(t[1]) {
+		case 0:
+			var t1 = t[2];
+			n = "TPType";
+			v = this.toCType(t1,p);
+			break;
+		case 1:
+			var e = t[2];
+			n = "TPExpr";
+			v = this.toExpr(e,p);
+			break;
+		}
+		return this.mkEnum("TypeParam",n,[v],p);
+	}
+	,toTPath: function(t,p) {
+		var fields = [{ field : "pack", expr : this.toArray($bind(this,this.toString),t.pack,p)},{ field : "name", expr : this.toString(t.name,p)},{ field : "params", expr : this.toArray($bind(this,this.toTParam),t.params,p)}];
+		if(t.sub != null) fields.push({ field : "sub", expr : this.toString(t.sub,p)});
+		return this.toObj(fields,p);
+	}
+	,toCType: function(t,p) {
+		var _g = this;
+		var ct = function(n,vl) {
+			return _g.mkEnum("ComplexType",n,vl,p);
+		};
+		switch(t[1]) {
+		case 0:
+			var t1 = t[2];
+			if(t[2].sub == null) switch(t[2].params.length) {
+			case 0:
+				switch(t[2].pack.length) {
+				case 0:
+					var n1 = t[2].name;
+					if(n1.charAt(0) == "$") return this.toString(n1,p); else return ct("TPath",[this.toTPath(t1,p)]);
+					break;
+				default:
+					return ct("TPath",[this.toTPath(t1,p)]);
+				}
+				break;
+			default:
+				return ct("TPath",[this.toTPath(t1,p)]);
+			} else switch(t[2].sub) {
+			default:
+				return ct("TPath",[this.toTPath(t1,p)]);
+			}
+			break;
+		case 1:
+			var ret = t[3];
+			var args = t[2];
+			return ct("TFunction",[this.toArray($bind(this,this.toCType),args,p),this.toCType(ret,p)]);
+		case 2:
+			var fields = t[2];
+			return ct("TAnonymous",[this.toArray($bind(this,this.toCField),fields,p)]);
+		case 3:
+			var t2 = t[2];
+			return ct("TParent",[this.toCType(t2,p)]);
+		case 4:
+			var fields1 = t[3];
+			var tl = t[2];
+			return ct("TExtend",[this.toArray($bind(this,this.toTPath),tl,p),this.toArray($bind(this,this.toCField),fields1,p)]);
+		case 5:
+			var t3 = t[2];
+			return ct("TOptional",[this.toCType(t3,p)]);
+		}
+	}
+	,toFun: function(f,p) {
+		var _g = this;
+		var farg = function(vv,p1) {
+			var n = vv.name;
+			var o = vv.opt;
+			var t = vv.type;
+			var e = vv.value;
+			var fields = [{ field : "name", expr : _g.toString(n,p1)},{ field : "opt", expr : _g.toBool(o,p1)},{ field : "type", expr : _g.toOpt($bind(_g,_g.toCType),t,p1)}];
+			if(e != null) fields.push({ field : "value", expr : _g.toExpr(e,p1)});
+			return _g.toObj(fields,p1);
+		};
+		var fparam;
+		var fparam1 = null;
+		fparam1 = function(t1,p2) {
+			var fields1 = [{ field : "name", expr : _g.toString(t1.name,p2)},{ field : "constraints", expr : _g.toArray($bind(_g,_g.toCType),t1.constraints,p2)},{ field : "params", expr : _g.toArray(fparam1,t1.params,p2)}];
+			return _g.toObj(fields1,p2);
+		};
+		fparam = fparam1;
+		var fields2 = [{ field : "args", expr : this.toArray(farg,f.args,p)},{ field : "ret", expr : this.toOpt($bind(this,this.toCType),f.ret,p)},{ field : "expr", expr : this.toOpt($bind(this,this.toExpr),f.expr,p)},{ field : "params", expr : this.toArray(fparam,f.params,p)}];
+		return this.toObj(fields2,p);
+	}
+	,toAccess: function(a,p) {
+		var n;
+		var n1;
+		switch(a[1]) {
+		case 0:
+			n1 = "APublic";
+			break;
+		case 1:
+			n1 = "APrivate";
+			break;
+		case 2:
+			n1 = "AStatic";
+			break;
+		case 3:
+			n1 = "AOverride";
+			break;
+		case 4:
+			n1 = "ADynamic";
+			break;
+		case 5:
+			n1 = "AInline";
+			break;
+		case 6:
+			n1 = "AMacro";
+			break;
+		}
+		return this.mkEnum("Access",n1,[],p);
+	}
+	,toCField: function(f,p) {
+		var _g = this;
+		var p2 = f.pos;
+		var toFType = function(k) {
+			var n;
+			var vl;
+			switch(k[1]) {
+			case 0:
+				var e = k[3];
+				var ct = k[2];
+				n = "FVar";
+				vl = [_g.toOpt($bind(_g,_g.toCType),ct,p),_g.toOpt($bind(_g,_g.toExpr),e,p)];
+				break;
+			case 1:
+				var f1 = k[2];
+				n = "FFun";
+				vl = [_g.toFun(f1,p)];
+				break;
+			case 2:
+				var e1 = k[5];
+				var t = k[4];
+				var set = k[3];
+				var get = k[2];
+				n = "FProp";
+				vl = [_g.toString(get,p),_g.toString(set,p),_g.toOpt($bind(_g,_g.toCType),t,p),_g.toOpt($bind(_g,_g.toExpr),e1,p)];
+				break;
+			}
+			return _g.mkEnum("FieldType",n,vl,p);
+		};
+		var fields = [];
+		fields.push({ field : "name", expr : this.toString(f.name,p)});
+		if(f.doc != null) fields.push({ field : "doc", expr : this.toString(f.doc,p)});
+		if(f.access != null) fields.push({ field : "access", expr : this.toArray($bind(this,this.toAccess),f.access,p)});
+		fields.push({ field : "kind", expr : toFType(f.kind)});
+		fields.push({ field : "pos", expr : this.toPos(f.pos)});
+		if(f.meta != null) fields.push({ field : "meta", expr : this.toMeta(f.meta,p)});
+		return this.toObj(fields,p);
+	}
+	,toMeta: function(m,p) {
+		var _g = this;
+		return this.toArray(function(me,_) {
+			var fields = [{ field : "name", expr : _g.toString(me.name,me.pos)},{ field : "params", expr : _g.toExprArray(me.params,me.pos)},{ field : "pos", expr : _g.toPos(me.pos)}];
+			return _g.toObj(fields,me.pos);
+		},m,p);
+	}
+	,toPos: function(p) {
+		if(this.curPos != null) return this.curPos;
+		var file = { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CString(p.file)), pos : p};
+		var pmin = { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CInt(p.min == null?"null":"" + p.min)), pos : p};
+		var pmax = { expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CInt(p.max == null?"null":"" + p.max)), pos : p};
+		if(this.inMacro) return { expr : haxe.macro.ExprDef.EUntyped({ expr : haxe.macro.ExprDef.ECall({ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent("$mk_pos")), pos : p},[file,pmin,pmax]), pos : p}), pos : p}; else return this.toObj([{ field : "file", expr : file},{ field : "min", expr : pmin},{ field : "max", expr : pmax}],p);
+	}
+	,toExprArray: function(a,p) {
+		if(a.length > 0) {
+			var _g = a[0].expr;
+			switch(_g[1]) {
+			case 29:
+				var e1 = _g[3];
+				var md = _g[2];
+				if(md.name == "$a" && md.params.length == 0) {
+					var _g1 = e1.expr;
+					switch(_g1[1]) {
+					case 6:
+						var el = _g1[2];
+						return this.toExprArray(el,p);
+					default:
+						return e1;
+					}
+				}
+				break;
+			default:
+			}
+		}
+		return this.toArray($bind(this,this.toExpr),a,p);
+	}
+	,toExpr: function(e,_) {
+		var _g = this;
+		var p = e.pos;
+		var expr = function(n,vl) {
+			var e1 = _g.mkEnum("ExprDef",n,vl,p);
+			return _g.toObj([{ field : "expr", expr : e1},{ field : "pos", expr : _g.toPos(p)}],p);
+		};
+		var loop = function(e2) {
+			return _g.toExpr(e2,e2.pos);
+		};
+		{
+			var _g1 = e.expr;
+			switch(_g1[1]) {
+			case 0:
+				var c = _g1[2];
+				switch(_g1[2][1]) {
+				case 3:
+					var n1 = _g1[2][2];
+					if(n1.charAt(0) == "$" && n1.length > 1) return this.toString(n1,p); else return expr("EConst",[this.toConst(c,p)]);
+					break;
+				default:
+					return expr("EConst",[this.toConst(c,p)]);
+				}
+				break;
+			case 1:
+				var e21 = _g1[3];
+				var e11 = _g1[2];
+				return expr("EArray",[loop(e11),loop(e21)]);
+			case 2:
+				var e22 = _g1[4];
+				var e12 = _g1[3];
+				var op = _g1[2];
+				return expr("EBinop",[this.toBinop(op,p),loop(e12),loop(e22)]);
+			case 3:
+				var s = _g1[3];
+				var e3 = _g1[2];
+				return expr("EField",[loop(e3),this.toString(s,p)]);
+			case 4:
+				var e4 = _g1[2];
+				return expr("EParenthesis",[loop(e4)]);
+			case 5:
+				var fl = _g1[2];
+				return expr("EObjectDecl",[this.toArray(function(f,p2) {
+					return _g.toObj([{ field : "field", expr : _g.toString(f.field,p)},{ field : "expr", expr : loop(f.expr)}],p2);
+				},fl,p)]);
+			case 6:
+				var el = _g1[2];
+				return expr("EArrayDecl",[this.toExprArray(el,p)]);
+			case 7:
+				var el1 = _g1[3];
+				var e5 = _g1[2];
+				return expr("ECall",[loop(e5),this.toExprArray(el1,p)]);
+			case 8:
+				var el2 = _g1[3];
+				var t = _g1[2];
+				return expr("ENew",[this.toTPath(t,p),this.toExprArray(el2,p)]);
+			case 9:
+				var e6 = _g1[4];
+				var isPostfix = _g1[3];
+				var op1 = _g1[2];
+				var ops;
+				switch(op1[1]) {
+				case 0:
+					ops = "OpIncrement";
+					break;
+				case 1:
+					ops = "OpDecrement";
+					break;
+				case 2:
+					ops = "OpNot";
+					break;
+				case 3:
+					ops = "OpNeg";
+					break;
+				case 4:
+					ops = "OpNegBits";
+					break;
+				}
+				var op2 = this.mkEnum("Unop",ops,[],p);
+				return expr("EUnop",[op2,this.toBool(isPostfix,p),loop(e6)]);
+			case 10:
+				var vl1 = _g1[2];
+				return expr("EVars",[this.toArray(function(vv,p1) {
+					var name = vv.name;
+					var type = vv.type;
+					var expr1 = vv.expr;
+					var fields = [{ field : "name", expr : _g.toString(name,p1)},{ field : "type", expr : _g.toOpt($bind(_g,_g.toCType),type,p1)},{ field : "expr", expr : _g.toOpt($bind(_g,_g.toExpr),expr1,p1)}];
+					return _g.toObj(fields,p1);
+				},vl1,p)]);
+			case 11:
+				var f1 = _g1[3];
+				var name1 = _g1[2];
+				return expr("EFunction",[this.toOpt($bind(this,this.toString),name1,p),this.toFun(f1,p)]);
+			case 12:
+				var el3 = _g1[2];
+				return expr("EBlock",[this.toExprArray(el3,p)]);
+			case 13:
+				var e23 = _g1[3];
+				var e13 = _g1[2];
+				return expr("EFor",[loop(e13),loop(e23)]);
+			case 14:
+				var e24 = _g1[3];
+				var e14 = _g1[2];
+				return expr("EIn",[loop(e14),loop(e24)]);
+			case 15:
+				var eelse = _g1[4];
+				var e25 = _g1[3];
+				var e15 = _g1[2];
+				return expr("EIf",[loop(e15),loop(e25),this.toOpt($bind(this,this.toExpr),eelse,p)]);
+			case 16:
+				var normalWhile = _g1[4];
+				var e26 = _g1[3];
+				var e16 = _g1[2];
+				return expr("EWhile",[loop(e16),loop(e26),this.toBool(normalWhile,p)]);
+			case 17:
+				var def = _g1[4];
+				var cases = _g1[3];
+				var e17 = _g1[2];
+				var scase = function(swc,p3) {
+					var el4 = swc.values;
+					var eg = swc.guard;
+					var e7 = swc.expr;
+					return _g.toObj([{ field : "values", expr : _g.toExprArray(el4,p3)},{ field : "guard", expr : _g.toOpt($bind(_g,_g.toExpr),eg,p3)},{ field : "expr", expr : _g.toOpt($bind(_g,_g.toExpr),e7,p3)}],p3);
+				};
+				return expr("ESwitch",[loop(e17),this.toArray(scase,cases,p),this.toOpt(function(def2,p4) {
+					return _g.toOpt(function(def3,p5) {
+						return _g.toExpr(def3,p5);
+					},def2,p4);
+				},def,p)]);
+			case 18:
+				var catches = _g1[3];
+				var e18 = _g1[2];
+				var scatch = function(c1,p6) {
+					var n2 = c1.name;
+					var t1 = c1.type;
+					var e8 = c1.expr;
+					return _g.toObj([{ field : "name", expr : _g.toString(n2,p6)},{ field : "type", expr : _g.toCType(t1,p6)},{ field : "expr", expr : loop(e8)}],p6);
+				};
+				return expr("ETry",[loop(e18),this.toArray(scatch,catches,p)]);
+			case 19:
+				var eo = _g1[2];
+				return expr("EReturn",[this.toOpt($bind(this,this.toExpr),eo,p)]);
+			case 20:
+				return expr("EBreak",[]);
+			case 21:
+				return expr("EContinue",[]);
+			case 22:
+				var e9 = _g1[2];
+				return expr("EUntyped",[loop(e9)]);
+			case 23:
+				var e10 = _g1[2];
+				return expr("EThrow",[loop(e10)]);
+			case 24:
+				var ct = _g1[3];
+				var e19 = _g1[2];
+				return expr("ECast",[loop(e19),this.toOpt($bind(this,this.toCType),ct,p)]);
+			case 25:
+				var flag = _g1[3];
+				var e20 = _g1[2];
+				return expr("EDisplay",[loop(e20),this.toBool(flag,p)]);
+			case 26:
+				var t2 = _g1[2];
+				return expr("EDisplayNew",[this.toTPath(t2,p)]);
+			case 27:
+				var e31 = _g1[4];
+				var e27 = _g1[3];
+				var e110 = _g1[2];
+				return expr("ETernary",[loop(e110),loop(e27),loop(e31)]);
+			case 28:
+				var ct1 = _g1[3];
+				var e111 = _g1[2];
+				return expr("ECheckType",[loop(e111),this.toCType(ct1,p)]);
+			case 29:
+				var e112 = _g1[3];
+				var md = _g1[2];
+				var _g11 = md.name;
+				switch(_g11) {
+				case "$":case "$e":
+					return e112;
+				case "$a":
+					{
+						var _g2 = e112.expr;
+						switch(_g2[1]) {
+						case 6:
+							var el5 = _g2[2];
+							return expr("EArrayDecl",[this.toExprArray(el5,p)]);
+						default:
+							return expr("EArrayDecl",[e112]);
+						}
+					}
+					break;
+				case "$b":
+					return expr("EBlock",[e112]);
+				case "$v":
+					return { expr : haxe.macro.ExprDef.ECall({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent("haxe")), pos : p},"macro"), pos : p},"Context"), pos : p},"makeExpr"), pos : p},[e,this.toPos(e.pos)]), pos : p};
+				case "$i":
+					return expr("EConst",[this.mkEnum("Constant","CIdent",[e112],e112.pos)]);
+				case "$p":
+					return { expr : haxe.macro.ExprDef.ECall({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EField({ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent("haxe")), pos : p},"macro"), pos : p},"ExprTools"), pos : p},"toFieldExpr"), pos : p},[e]), pos : p};
+				case ":pos":
+					if(md.params.length == 1) {
+						var old = this.curPos;
+						this.curPos = md.params[0];
+						var e28 = loop(e112);
+						this.curPos = old;
+						return e28;
+					} else return expr("EMeta",[this.toObj([{ field : "name", expr : this.toString(md.name,p)},{ field : "params", expr : this.toExprArray(md.params,p)},{ field : "pos", expr : this.toPos(p)}],p),loop(e112)]);
+					break;
+				default:
+					return expr("EMeta",[this.toObj([{ field : "name", expr : this.toString(md.name,p)},{ field : "params", expr : this.toExprArray(md.params,p)},{ field : "pos", expr : this.toPos(p)}],p),loop(e112)]);
+				}
+				break;
+			}
+		}
+	}
+	,toTParamDecl: function(t,p) {
+		var params = [];
+		var _g = 0;
+		var _g1 = t.params;
+		while(_g < _g1.length) {
+			var tp = _g1[_g];
+			++_g;
+			params.push(this.toTParamDecl(tp,p));
+		}
+		var constraints = [];
+		var _g2 = 0;
+		var _g11 = t.constraints;
+		while(_g2 < _g11.length) {
+			var c = _g11[_g2];
+			++_g2;
+			constraints.push(this.toCType(c,p));
+		}
+		return this.toObj([{ field : "name", expr : this.toString(t.name,p)},{ field : "params", expr : { expr : haxe.macro.ExprDef.EArrayDecl(params), pos : p}},{ field : "constraints", expr : { expr : haxe.macro.ExprDef.EArrayDecl(constraints), pos : p}}],p);
+	}
+	,toTypeDef: function(td) {
+		var p = td.pos;
+		{
+			var _g = td.decl;
+			switch(_g[1]) {
+			case 0:
+				var d = _g[2];
+				var ext = null;
+				var impl = [];
+				var interf = false;
+				var _g1 = 0;
+				var _g2 = d.flags;
+				while(_g1 < _g2.length) {
+					var f = _g2[_g1];
+					++_g1;
+					switch(f[1]) {
+					case 1:case 2:
+						break;
+					case 0:
+						interf = true;
+						break;
+					case 3:
+						var t = f[2];
+						ext = this.toTPath(t,td.pos);
+						break;
+					case 4:
+						var i = f[2];
+						impl.push(this.toTPath(i,td.pos));
+						break;
+					}
+				}
+				var params = [];
+				var _g11 = 0;
+				var _g21 = d.params;
+				while(_g11 < _g21.length) {
+					var par = _g21[_g11];
+					++_g11;
+					params.push(this.toTParamDecl(par,p));
+				}
+				var isExtern = false;
+				var _g12 = 0;
+				var _g22 = d.flags;
+				try {
+					while(_g12 < _g22.length) {
+						var f1 = _g22[_g12];
+						++_g12;
+						switch(f1[1]) {
+						case 1:
+							isExtern = true;
+							throw "__break__";
+							break;
+						default:
+						}
+					}
+				} catch( e ) { if( e != "__break__" ) throw e; }
+				var kindParams = [];
+				if(ext == null) kindParams.push({ expr : haxe.macro.ExprDef.EConst(haxe.macro.Constant.CIdent("null")), pos : p}); else kindParams.push(ext);
+				kindParams.push({ expr : haxe.macro.ExprDef.EArrayDecl(impl), pos : p});
+				kindParams.push(this.toBool(interf,p));
+				var fields = [];
+				var _g13 = 0;
+				var _g23 = d.data;
+				while(_g13 < _g23.length) {
+					var d1 = _g23[_g13];
+					++_g13;
+					fields.push(this.toCField(d1,p));
+				}
+				return this.toObj([{ field : "pack", expr : { expr : haxe.macro.ExprDef.EArrayDecl([]), pos : p}},{ field : "name", expr : this.toString(d.name,p)},{ field : "pos", expr : this.toPos(p)},{ field : "meta", expr : this.toMeta(d.meta,p)},{ field : "params", expr : { expr : haxe.macro.ExprDef.EArrayDecl(params), pos : p}},{ field : "isExtern", expr : this.toBool(isExtern,p)},{ field : "kind", expr : this.mkEnum("TypeDefKind","TDClass",kindParams,p)},{ field : "fields", expr : { expr : haxe.macro.ExprDef.EArrayDecl(fields), pos : p}}],td.pos);
+			default:
+				throw "Invalid type for reification";
+			}
+		}
+	}
+	,__class__: haxeparser._HaxeParser.Reificator
+};
 var haxeprinter = {};
 haxeprinter.Printer = function() {
 	this.config = haxe.Json.parse(haxe.Resource.getString("config"));
@@ -13834,14 +14957,14 @@ haxeproject.HaxeProject = function() {
 	newprojectdialog.NewProjectDialog.getCategory("Haxe").addItem("Python Project",$bind(this,this.createPythonProject));
 	var options = { };
 	options.encoding = "utf8";
-	var path = js.Node.require("path").join("core","templates","Main.hx");
+	var path = js.Node.require("path").join("core","templates","Main.tpl");
 	js.Node.require("fs").readFile(path,options,function(error,data) {
 		if(error == null) _g.code = data; else {
 			console.log(error);
 			Alertify.error("Can't load template " + path);
 		}
 	});
-	path = js.Node.require("path").join("core","templates","index.html");
+	path = js.Node.require("path").join("core","templates","index.tpl");
 	js.Node.require("fs").readFile(path,options,function(error1,data1) {
 		if(error1 == null) _g.indexPageCode = data1; else {
 			console.log(error1);
@@ -13888,17 +15011,6 @@ haxeproject.HaxeProject.prototype = {
 		js.node.Mkdirp.mkdirp(pathToSrc,function(err,made) {
 			var pathToProject = data.projectLocation;
 			if(data.createDirectory) pathToProject = js.Node.require("path").join(pathToProject,data.projectName);
-			var pathToMain;
-			pathToMain = js.Node.require("path").join(pathToProject,"src","Main.hx");
-			js.Node.require("fs").writeFile(pathToMain,_g.code,null,function(error) {
-				if(error != null) Alertify.error("Write file error" + error);
-				js.Node.require("fs").exists(pathToMain,function(exists) {
-					if(exists) {
-						var tabManagerInstance = tabmanager.TabManager.get();
-						tabManagerInstance.openFileInNewTab(pathToMain);
-					} else console.log(pathToMain + " file was not generated");
-				});
-			});
 			var project = new projectaccess.Project();
 			project.name = data.projectName;
 			project.projectPackage = data.projectPackage;
@@ -13908,6 +15020,28 @@ haxeproject.HaxeProject.prototype = {
 			project.type = 0;
 			project.target = target;
 			projectaccess.ProjectAccess.path = pathToProject;
+			projectaccess.ProjectAccess.currentProject = project;
+			var pathToSrc1 = js.Node.require("path").join(pathToProject,"src");
+			var fullPackagePath = "";
+			if(data.projectPackage != "") {
+				fullPackagePath = StringTools.replace(data.projectPackage,".",js.Node.require("path").sep);
+				js.node.Mkdirp.mkdirpSync(js.Node.require("path").join(pathToSrc1,fullPackagePath));
+			}
+			var pathToMain;
+			pathToMain = js.Node.require("path").join(pathToSrc1,fullPackagePath,"Main.hx");
+			var tabManagerInstance = tabmanager.TabManager.get();
+			var fileTemplate = { };
+			fileTemplate = tabManagerInstance.generateTemplate(fileTemplate,data.projectPackage);
+			var templateCode = new haxe.Template(_g.code).execute(fileTemplate);
+			js.Node.require("fs").writeFile(pathToMain,templateCode,null,function(error) {
+				if(error != null) Alertify.error("Write file error" + error);
+				js.Node.require("fs").exists(pathToMain,function(exists) {
+					if(exists) {
+						var tabManagerInstance1 = tabmanager.TabManager.get();
+						tabManagerInstance1.openFileInNewTab(pathToMain);
+					} else console.log(pathToMain + " file was not generated");
+				});
+			});
 			var filenames = ["flash","javascript","neko","php","cpp","java","csharp","python"];
 			var pathToProjectTemplates = js.Node.require("path").join("core","templates","project");
 			var _g2 = 0;
@@ -13918,7 +15052,7 @@ haxeproject.HaxeProject.prototype = {
 				targetData.pathToHxml = filenames[i] + ".hxml";
 				var options = { };
 				options.encoding = "utf8";
-				var templateCode = js.Node.require("fs").readFileSync(js.Node.require("path").join(pathToProjectTemplates,targetData.pathToHxml),options);
+				var templateCode1 = js.Node.require("fs").readFileSync(js.Node.require("path").join(pathToProjectTemplates,filenames[i] + ".tpl"),options);
 				var pathToFile;
 				switch(i) {
 				case 0:
@@ -13959,13 +15093,13 @@ haxeproject.HaxeProject.prototype = {
 				default:
 					throw "Path to file is null";
 				}
-				templateCode = mustache.Mustache.render(templateCode,{ file : pathToFile});
-				js.Node.require("fs").writeFileSync(js.Node.require("path").join(pathToProject,targetData.pathToHxml),templateCode,"utf8");
+				var templateCode2 = new haxe.Template(templateCode1).execute({ file : pathToFile, pack : data.projectPackage});
+				js.Node.require("fs").writeFileSync(js.Node.require("path").join(pathToProject,targetData.pathToHxml),templateCode2,"utf8");
 				project.targetData.push(targetData);
 			}
 			js.Node.require("fs").mkdir(js.Node.require("path").join(pathToProject,"bin"),null,function(error1) {
 				if(error1 == null) {
-					var updatedPageCode = mustache.Mustache.render(_g.indexPageCode,{ title : project.name, script : project.name + ".js"});
+					var updatedPageCode = new haxe.Template(_g.indexPageCode).execute({ title : project.name, script : project.name + ".js"});
 					var pathToWebPage = js.Node.require("path").join(pathToProject,"bin","index.html");
 					js.Node.require("fs").writeFile(pathToWebPage,updatedPageCode,"utf8",function(error2) {
 						if(error2 != null) {
@@ -13976,7 +15110,6 @@ haxeproject.HaxeProject.prototype = {
 				} else Alertify.error("Folder creation error: " + error1);
 			});
 			var path = js.Node.require("path").join(pathToProject,"project.hide");
-			projectaccess.ProjectAccess.currentProject = project;
 			projectaccess.ProjectAccess.save((function(f,a1) {
 				return function() {
 					return f(a1);
@@ -14085,6 +15218,9 @@ $hxClasses["js.node.Mkdirp"] = js.node.Mkdirp;
 js.node.Mkdirp.__name__ = ["js","node","Mkdirp"];
 js.node.Mkdirp.mkdirp = function(dir,mode,cb) {
 	if(cb == null) js.node.Mkdirp._mkdirp(dir,mode); else js.node.Mkdirp._mkdirp(dir,mode,cb);
+};
+js.node.Mkdirp.mkdirpSync = function(dir,mode) {
+	return js.node.Mkdirp._mkdirp.sync(dir,mode);
 };
 js.node.Mv = function() { };
 $hxClasses["js.node.Mv"] = js.node.Mv;
@@ -14424,103 +15560,6 @@ menu.Menu.prototype = {
 	}
 	,__class__: menu.Menu
 };
-var mustache = {};
-mustache.Mustache = function(template,data) {
-	this.template = new String(template);
-	this.data = data;
-	this.context = data;
-	this.stack = [];
-	this.replacing = true;
-};
-$hxClasses["mustache.Mustache"] = mustache.Mustache;
-mustache.Mustache.__name__ = ["mustache","Mustache"];
-mustache.Mustache.render = function(template,data) {
-	var mustache1 = new mustache.Mustache(template,data);
-	return mustache1._render();
-};
-mustache.Mustache.prototype = {
-	template: null
-	,data: null
-	,context: null
-	,stack: null
-	,replacing: null
-	,_render: function() {
-		var canReplace = true;
-		while(canReplace) canReplace = this._replaceNext();
-		return this.template;
-	}
-	,_getValue: function(key) {
-		var raw = Reflect.getProperty(this.context,key);
-		var value = raw;
-		if(Reflect.isFunction(raw)) value = raw();
-		return value;
-	}
-	,_replaceVariable: function(pattern) {
-		var expression = pattern.matched(3);
-		return Std.string(this._getValue(expression));
-	}
-	,_replaceArray: function(array,beginPattern,endPattern) {
-		var beginPosition = beginPattern.matchedPos();
-		var endPosition = endPattern.matchedPos();
-		var beforeArray = this.template.substring(0,beginPosition.pos);
-		var afterArray = this.template.substring(endPosition.pos + endPosition.len,this.template.length);
-		var arrayString = this.template.substring(beginPosition.pos + beginPosition.len,endPosition.pos);
-		var value = "";
-		var _g = 0;
-		while(_g < array.length) {
-			var element = array[_g];
-			++_g;
-			value += mustache.Mustache.render(arrayString,element);
-		}
-		this.template = beforeArray + value + afterArray;
-	}
-	,_replaceCondition: function(condition,beginPattern,endPattern) {
-		var beginPosition = beginPattern.matchedPos();
-		var endPosition = endPattern.matchedPos();
-		var beforeArray = this.template.substring(0,beginPosition.pos);
-		var afterArray = this.template.substring(endPosition.pos + endPosition.len,this.template.length);
-		var arrayString = this.template.substring(beginPosition.pos + beginPosition.len,endPosition.pos);
-		var value = "";
-		if(condition) value = arrayString;
-		this.template = beforeArray + value + afterArray;
-	}
-	,_replaceBlockOpener: function(pattern) {
-		var expression = pattern.matched(3);
-		if((this._getValue(expression) instanceof Array) && this._getValue(expression).__enum__ == null) {
-			this.replacing = false;
-			var endPattern = new EReg("{{/" + expression + "}}","g");
-			if(endPattern.match(this.template)) this._replaceArray(this._getValue(expression),pattern,endPattern); else this.replacing = true;
-		} else if(typeof(this._getValue(expression)) == "boolean") {
-			this.replacing = false;
-			var endPattern1 = new EReg("{{/" + expression + "\\?}}","g");
-			if(endPattern1.match(this.template)) this._replaceCondition(this._getValue(expression),pattern,endPattern1); else this.replacing = true;
-		} else if(Reflect.isObject(this._getValue(expression))) {
-			this.stack.push({ name : expression, context : this.context});
-			this.context = this._getValue(expression);
-		}
-	}
-	,_replaceBlockCloser: function(pattern) {
-		var expression = pattern.matched(3);
-		if(this.stack.length > 0 && expression == this.stack[this.stack.length - 1].name) this.context = this.stack.pop().context;
-	}
-	,_replacePattern: function(pattern) {
-		var value = "";
-		var tag = pattern.matched(2);
-		this.replacing = true;
-		if(tag.length == 0) value = this._replaceVariable(pattern); else if(tag == "#") this._replaceBlockOpener(pattern); else if(tag == "/") this._replaceBlockCloser(pattern);
-		if(this.replacing) this.template = pattern.replace(this.template,value);
-	}
-	,_replaceNext: function() {
-		var pattern = new EReg("{{(([#/]?)([\\.\\w\\?]+))}}","");
-		var replaced = false;
-		if(pattern.match(this.template)) {
-			this._replacePattern(pattern);
-			replaced = true;
-		}
-		return replaced;
-	}
-	,__class__: mustache.Mustache
-};
 var newprojectdialog = {};
 newprojectdialog.Category = function(_name,_element) {
 	this.element = _element;
@@ -14672,29 +15711,30 @@ newprojectdialog.NewProjectDialog.getCheckboxData = function(key) {
 	return data;
 };
 newprojectdialog.NewProjectDialog.createProject = function() {
-	if(newprojectdialog.NewProjectDialog.projectLocation.value != "" && newprojectdialog.NewProjectDialog.projectName.value != "") js.Node.require("fs").exists(newprojectdialog.NewProjectDialog.projectLocation.value,function(exists) {
-		if(exists) {
-			var item = newprojectdialog.NewProjectDialog.selectedCategory.getItem(newprojectdialog.NewProjectDialog.list.value);
-			newprojectdialog.NewProjectDialog.saveProjectCategory();
-			if(item.createProjectFunction != null) {
-				var projectPackage = newprojectdialog.NewProjectDialog.getCheckboxData("Package");
-				var projectCompany = newprojectdialog.NewProjectDialog.getCheckboxData("Company");
-				var projectLicense = newprojectdialog.NewProjectDialog.getCheckboxData("License");
-				var projectURL = newprojectdialog.NewProjectDialog.getCheckboxData("URL");
-				item.createProjectFunction({ projectName : newprojectdialog.NewProjectDialog.projectName.value, projectLocation : newprojectdialog.NewProjectDialog.projectLocation.value, projectPackage : projectPackage, projectCompany : projectCompany, projectLicense : projectLicense, projectURL : projectURL, createDirectory : !newprojectdialog.NewProjectDialog.selectedCategory.getItem(newprojectdialog.NewProjectDialog.list.value).showCreateDirectoryOption || newprojectdialog.NewProjectDialog.createDirectoryForProject.checked});
-				js.Browser.getLocalStorage().setItem("Location",newprojectdialog.NewProjectDialog.projectLocation.value);
-			}
-			newprojectdialog.NewProjectDialog.saveData("Package");
-			newprojectdialog.NewProjectDialog.saveData("Company");
-			newprojectdialog.NewProjectDialog.saveData("License");
-			newprojectdialog.NewProjectDialog.saveData("URL");
-			newprojectdialog.NewProjectDialog.saveCheckboxState("Package");
-			newprojectdialog.NewProjectDialog.saveCheckboxState("Company");
-			newprojectdialog.NewProjectDialog.saveCheckboxState("License");
-			newprojectdialog.NewProjectDialog.saveCheckboxState("URL");
-			newprojectdialog.NewProjectDialog.saveCheckboxState("CreateDirectory");
-			newprojectdialog.NewProjectDialog.hide();
+	var location = newprojectdialog.NewProjectDialog.projectLocation.value;
+	if(location != "" && newprojectdialog.NewProjectDialog.projectName.value != "") js.Node.require("fs").exists(location,function(exists) {
+		if(!exists) js.node.Mkdirp.mkdirpSync(location);
+		var item = newprojectdialog.NewProjectDialog.selectedCategory.getItem(newprojectdialog.NewProjectDialog.list.value);
+		newprojectdialog.NewProjectDialog.saveProjectCategory();
+		if(item.createProjectFunction != null) {
+			var projectPackage = newprojectdialog.NewProjectDialog.getCheckboxData("Package");
+			var projectCompany = newprojectdialog.NewProjectDialog.getCheckboxData("Company");
+			var projectLicense = newprojectdialog.NewProjectDialog.getCheckboxData("License");
+			var projectURL = newprojectdialog.NewProjectDialog.getCheckboxData("URL");
+			var data = { projectName : newprojectdialog.NewProjectDialog.projectName.value, projectLocation : location, projectPackage : projectPackage, projectCompany : projectCompany, projectLicense : projectLicense, projectURL : projectURL, createDirectory : !newprojectdialog.NewProjectDialog.selectedCategory.getItem(newprojectdialog.NewProjectDialog.list.value).showCreateDirectoryOption || newprojectdialog.NewProjectDialog.createDirectoryForProject.checked};
+			item.createProjectFunction(data);
+			js.Browser.getLocalStorage().setItem("Location",location);
 		}
+		newprojectdialog.NewProjectDialog.saveData("Package");
+		newprojectdialog.NewProjectDialog.saveData("Company");
+		newprojectdialog.NewProjectDialog.saveData("License");
+		newprojectdialog.NewProjectDialog.saveData("URL");
+		newprojectdialog.NewProjectDialog.saveCheckboxState("Package");
+		newprojectdialog.NewProjectDialog.saveCheckboxState("Company");
+		newprojectdialog.NewProjectDialog.saveCheckboxState("License");
+		newprojectdialog.NewProjectDialog.saveCheckboxState("URL");
+		newprojectdialog.NewProjectDialog.saveCheckboxState("CreateDirectory");
+		newprojectdialog.NewProjectDialog.hide();
 	});
 };
 newprojectdialog.NewProjectDialog.saveProjectCategory = function() {
@@ -15108,10 +16148,15 @@ openflproject.CreateOpenFLProject.__name__ = ["openflproject","CreateOpenFLProje
 openflproject.CreateOpenFLProject.createOpenFLProject = function(params,path,onComplete) {
 	var processParams = ["run","lime","create"].concat(params);
 	var processHelper = core.ProcessHelper.get();
-	processHelper.runProcess("haxelib",processParams,path,onComplete,function(code,stdout,stderr) {
-		Alertify.error(["haxelib"].concat(processParams).join(" ") + " " + (code == null?"null":"" + code));
-		if(stdout != "") Alertify.error("stdout:\n" + stdout);
-		if(stderr != "") Alertify.error("stderr:\n" + stderr);
+	var pathToHaxelib = core.HaxeHelper.getPathToHaxelib();
+	processHelper.runProcess(pathToHaxelib,processParams,path,function(stdout,stderr) {
+		if(stdout != "") Alertify.log("stdout:\n" + stdout);
+		if(stderr != "") Alertify.log("stderr:\n" + stderr);
+		onComplete();
+	},function(code,stdout1,stderr1) {
+		Alertify.error([pathToHaxelib].concat(processParams).join(" ") + " " + (code == null?"null":"" + code));
+		if(stdout1 != "") Alertify.error("stdout:\n" + stdout1);
+		if(stderr1 != "") Alertify.error("stderr:\n" + stderr1);
 	});
 };
 openflproject.OpenFLProject = function() {
@@ -15143,7 +16188,7 @@ openflproject.OpenFLProject.prototype = {
 			var str = "";
 			if(data.projectPackage != "") str = data.projectPackage + ".";
 			params = ["openfl:project","\"" + str + data.projectName + "\""];
-		} else params = [data.projectName];
+		} else params = ["openfl:" + data.projectName];
 		openflproject.CreateOpenFLProject.createOpenFLProject(params,data.projectLocation,function() {
 			var pathToProject = js.Node.require("path").join(data.projectLocation,data.projectName);
 			_g.createProject(data);
@@ -15184,17 +16229,18 @@ $hxClasses["openflproject.OpenFLTools"] = openflproject.OpenFLTools;
 openflproject.OpenFLTools.__name__ = ["openflproject","OpenFLTools"];
 openflproject.OpenFLTools.getParams = function(path,target,onLoaded) {
 	var processHelper = core.ProcessHelper.get();
-	processHelper.runProcess("haxelib",["run","lime","display",target],path,function(stdout,stderr) {
+	processHelper.runProcess(core.HaxeHelper.getPathToHaxelib(),["run","lime","display",target,"-nocolor"],path,function(stdout,stderr) {
 		if(onLoaded != null) onLoaded(stdout);
 		openflproject.OpenFLTools.printStderr(stderr);
 	},function(code,stdout1,stderr1) {
 		Alertify.error("OpenFL tools error. OpenFL may be not installed. Please update OpenFL.(haxelib upgrade)");
 		Alertify.error("OpenFL tools process exit code " + code);
+		openflproject.OpenFLTools.printStderr(stdout1);
 		openflproject.OpenFLTools.printStderr(stderr1);
 	});
 };
 openflproject.OpenFLTools.printStderr = function(stderr) {
-	if(stderr != "") Alertify.error("OpenFL tools stderr: " + stderr);
+	if(stderr != "") Alertify.error("OpenFL tools stderr: " + stderr,15000);
 };
 var openproject = {};
 openproject.OpenFL = function() { };
@@ -15259,7 +16305,6 @@ openproject.OpenProject.checkIfFileExists = function(path) {
 };
 openproject.OpenProject.parseProject = function(path) {
 	console.log("open: " + path);
-	openproject.OpenProject.closeProject(true);
 	var filename = js.Node.require("path").basename(path);
 	var outlinePanel = core.OutlinePanel.get();
 	var tabManagerInstance = tabmanager.TabManager.get();
@@ -15269,6 +16314,7 @@ openproject.OpenProject.parseProject = function(path) {
 	var splitter = core.Splitter.get();
 	switch(filename) {
 	case "project.hide":
+		openproject.OpenProject.closeProject(true);
 		outlinePanel.clearFields();
 		outlinePanel.update();
 		var options = { };
@@ -15337,6 +16383,7 @@ openproject.OpenProject.parseProject = function(path) {
 		var extension = js.Node.require("path").extname(filename);
 		switch(extension) {
 		case ".hxml":
+			openproject.OpenProject.closeProject(true);
 			outlinePanel.clearFields();
 			outlinePanel.update();
 			var pathToProject1 = js.Node.require("path").dirname(path);
@@ -15357,6 +16404,7 @@ openproject.OpenProject.parseProject = function(path) {
 			recentProjectsList.add(pathToProjectHide);
 			break;
 		case ".lime":case ".xml":
+			openproject.OpenProject.closeProject(true);
 			outlinePanel.clearFields();
 			outlinePanel.update();
 			var options1 = { };
@@ -15384,9 +16432,11 @@ openproject.OpenProject.searchForLastProject = function() {
 openproject.OpenProject.closeProject = function(sync) {
 	if(sync == null) sync = false;
 	var tabManagerInstance = tabmanager.TabManager.get();
+	var processHelper = core.ProcessHelper.get();
 	if(projectaccess.ProjectAccess.path != null) {
 		projectaccess.ProjectAccess.save(openproject.OpenProject.updateProjectData,sync);
 		tabManagerInstance.closeAll();
+		processHelper.clearErrors();
 	} else openproject.OpenProject.updateProjectData();
 };
 openproject.OpenProject.updateProjectData = function() {
@@ -15406,6 +16456,280 @@ openproject.OpenProject.parseProjectData = function(data) {
 		project = js.Node.parse(data);
 	}
 	return project;
+};
+var outline = {};
+outline.OutlineFormatter = function(treeItemFormats) {
+	var outlineItems = new $("#outline").jqxTree("getItems");
+	var li;
+	var item;
+	var itemType;
+	var item1;
+	var _g1 = 0;
+	var _g = outlineItems.length;
+	while(_g1 < _g) {
+		var i = _g1++;
+		item1 = outlineItems[i];
+		if(i == 0) continue;
+		li = js.Boot.__cast(item1.element , HTMLLIElement);
+		itemType = treeItemFormats.shift();
+		var _g2 = itemType.type;
+		switch(_g2) {
+		case "enumGroup":
+			li.classList.add("outlineEnumGroup");
+			break;
+		case "class":
+			li.classList.add("outlineClass");
+			break;
+		case "typedef":
+			li.classList.add("outlineTypeDef");
+			break;
+		}
+		if(itemType.type == "var" || itemType.type == "function" || itemType.type == "enum") {
+			li.classList.add("outlineField");
+			var element = window.document.createElement("div");
+			li.insertBefore(element,li.firstChild);
+			if(!itemType.isPublic) element.classList.add("outlinePrivate"); else {
+				element.innerHTML = "&#8226;";
+				element.classList.add("outlinePublic");
+			}
+			element = window.document.createElement("div");
+			li.insertBefore(element,li.firstChild);
+			var _g21 = itemType.type;
+			switch(_g21) {
+			case "enum":
+				element.classList.add("outlineEnum");
+				element.innerHTML = "E";
+				break;
+			case "var":
+				element.classList.add("outlineVar");
+				element.innerHTML = "V";
+				break;
+			case "function":
+				element.classList.add("outlineFunction");
+				element.innerHTML = "M";
+				break;
+			}
+			element = window.document.createElement("div");
+			li.insertBefore(element,li.firstChild);
+			if(itemType.isStatic) {
+				element.innerHTML = "&#8226;";
+				element.classList.add("outlineStatic");
+			} else element.classList.add("outlineNotStatic");
+		}
+	}
+};
+$hxClasses["outline.OutlineFormatter"] = outline.OutlineFormatter;
+outline.OutlineFormatter.__name__ = ["outline","OutlineFormatter"];
+outline.OutlineFormatter.prototype = {
+	__class__: outline.OutlineFormatter
+};
+outline.OutlineItem = function(name,type,pos,len) {
+	this.name = name;
+	this.type = type;
+	this.pos = pos;
+	this.len = len;
+	this.fields = new Array();
+};
+$hxClasses["outline.OutlineItem"] = outline.OutlineItem;
+outline.OutlineItem.__name__ = ["outline","OutlineItem"];
+outline.OutlineItem.prototype = {
+	name: null
+	,type: null
+	,pos: null
+	,len: null
+	,fields: null
+	,__class__: outline.OutlineItem
+};
+outline.OutlineField = function(name,type,pos,len,isPublic,isStatic) {
+	this.name = name;
+	this.type = type;
+	this.pos = pos;
+	this.len = len;
+	this.isPublic = isPublic;
+	this.isStatic = isStatic;
+};
+$hxClasses["outline.OutlineField"] = outline.OutlineField;
+outline.OutlineField.__name__ = ["outline","OutlineField"];
+outline.OutlineField.prototype = {
+	name: null
+	,type: null
+	,pos: null
+	,len: null
+	,isPublic: null
+	,isStatic: null
+	,__class__: outline.OutlineField
+};
+outline.OutlineParser = function() {
+};
+$hxClasses["outline.OutlineParser"] = outline.OutlineParser;
+outline.OutlineParser.__name__ = ["outline","OutlineParser"];
+outline.OutlineParser.prototype = {
+	parse: function(data,path) {
+		var outlineItems = new Array();
+		var enumIndexs = new Array();
+		var types = parser.RegexParser.getTypeDeclarations(data);
+		var outlineItem;
+		var _g = 0;
+		while(_g < types.length) {
+			var typeInfo = types[_g];
+			++_g;
+			outlineItem = new outline.OutlineItem(typeInfo.name,typeInfo.type,typeInfo.pos.pos,typeInfo.pos.len);
+			outlineItems.push(outlineItem);
+			if(typeInfo.type == "enum") enumIndexs.push(outlineItems.length - 1);
+		}
+		var _g1 = 0;
+		while(_g1 < enumIndexs.length) {
+			var enumIndex = [enumIndexs[_g1]];
+			++_g1;
+			var enumBlock = data.substring(outlineItems[enumIndex[0]].pos,outlineItems[enumIndex[0] + 1].pos);
+			var regEx1 = [new EReg("([A-Za-z0-9_]+);","gm")];
+			regEx1[0].map(enumBlock,(function(regEx1,enumIndex) {
+				return function(ereg2) {
+					var pos = regEx1[0].matchedPos();
+					outlineItems[enumIndex[0]].fields.push(new outline.OutlineField(regEx1[0].matched(1),"enum",pos.pos,pos.len));
+					return "";
+				};
+			})(regEx1,enumIndex));
+		}
+		var methods = this.getFunctionDeclarations(data);
+		var methodFields = new Array();
+		var _g2 = 0;
+		while(_g2 < methods.length) {
+			var methodInfo = methods[_g2];
+			++_g2;
+			methodFields.push(new outline.OutlineField(methodInfo.name + " (" + methodInfo.params.toString() + ")","function",methodInfo.pos.pos,methodInfo.pos.len,methodInfo.isPublic,methodInfo.isStatic));
+		}
+		var vars = this.getVariableDeclarations(data);
+		var methodIndex = 0;
+		var varInfo;
+		var varIndex;
+		var removedVarCount = 0;
+		var hasRemovedVar;
+		var varFields = new Array();
+		var _g11 = 0;
+		var _g3 = vars.length;
+		while(_g11 < _g3) {
+			var i = _g11++;
+			varIndex = i - removedVarCount;
+			varInfo = vars[varIndex];
+			hasRemovedVar = false;
+			var _g31 = 0;
+			var _g21 = methods.length;
+			while(_g31 < _g21) {
+				var methodIndex1 = _g31++;
+				if(varInfo.pos.pos > methods[methodIndex1].pos.pos && varInfo.pos.pos < methods[methodIndex1].endPos) {
+					vars.splice(varIndex,1);
+					removedVarCount++;
+					hasRemovedVar = true;
+					break;
+				}
+			}
+			if(hasRemovedVar) continue;
+			var typeString = "";
+			if(varInfo.type != "") typeString = " : " + varInfo.type;
+			varFields.push(new outline.OutlineField(varInfo.name + typeString,"var",varInfo.pos.pos,varInfo.pos.len,varInfo.isPublic,varInfo.isStatic));
+		}
+		var parentIndex = 0;
+		var fieldInfo;
+		var usingSmartSort = core.OutlinePanel.get().useSorting;
+		if(usingSmartSort) {
+			var nameA;
+			var nameB;
+			var sortFunction = function(a,b) {
+				nameA = a.name.toLowerCase();
+				nameB = b.name.toLowerCase();
+				if(nameA < nameB) return -1;
+				if(nameA > nameB) return 1;
+				return 0;
+			};
+			varFields.sort(sortFunction);
+			methodFields.sort(sortFunction);
+		}
+		while(varFields.length != 0 || methodFields.length != 0) {
+			if(usingSmartSort) {
+				if(varFields.length != 0) {
+					fieldInfo = varFields.shift();
+					if(varFields.length == 0) {
+						parentIndex = 0;
+						console.log("length == 0");
+					}
+				} else fieldInfo = methodFields.shift();
+				parentIndex = 0;
+			} else {
+				if(varFields.length == 0) fieldInfo = methodFields.shift(); else if(methodFields.length == 0) fieldInfo = varFields.shift(); else if(varFields[0].pos < methodFields[0].pos) fieldInfo = varFields.shift(); else fieldInfo = methodFields.shift();
+				parentIndex = 0;
+			}
+			while(parentIndex + 1 < outlineItems.length && fieldInfo.pos > outlineItems[parentIndex + 1].pos) parentIndex++;
+			outlineItems[parentIndex].fields.push(fieldInfo);
+		}
+		return outlineItems;
+	}
+	,getVariableDeclarations: function(data) {
+		var variableDeclarations = [];
+		var eregVariables = new EReg("(static)?\\s?(public)?\\s?var +([a-z_0-9]+):?([^=;]+)?","gi");
+		eregVariables.map(data,function(ereg2) {
+			var pos = ereg2.matchedPos();
+			var index = pos.pos + pos.len;
+			var isStatic = ereg2.matched(1) == "static";
+			var isPublic = ereg2.matched(2) == "public";
+			var name = ereg2.matched(3);
+			var type = ereg2.matched(4);
+			var varDecl1 = { name : name, pos : pos, type : "", params : null, isPublic : isPublic, isStatic : isStatic};
+			if(type != null) {
+				type = StringTools.trim(type);
+				if(type != "") varDecl1.type = type;
+			}
+			variableDeclarations.push(varDecl1);
+			return "";
+		});
+		return variableDeclarations;
+	}
+	,getFunctionDeclarations: function(data) {
+		var functionDeclarations = [];
+		var eregFunctionWithParameters = new EReg("(static)?\\s?(public)?\\s?function *([a-zA-Z0-9_]*) *\\(([^\\)]*)","gm");
+		eregFunctionWithParameters.map(data,function(ereg2) {
+			var pos = ereg2.matchedPos();
+			var isStatic = ereg2.matched(1) == "static";
+			var isPublic = ereg2.matched(2) == "public";
+			var name = ereg2.matched(3);
+			if(name != "") {
+				var params = null;
+				var str = ereg2.matched(4);
+				if(str != null) params = str.split(",");
+				var functionBody = HxOverrides.substr(data,pos.pos + pos.len,null);
+				var leftBraces = functionBody.split("{");
+				var functionBodyLength = leftBraces[0].length + 1;
+				var unClosedBraces = 0;
+				var leftBrace;
+				var rightBrace;
+				var _g1 = 1;
+				var _g = leftBraces.length;
+				while(_g1 < _g) {
+					var i = _g1++;
+					leftBrace = leftBraces[i];
+					unClosedBraces++;
+					var rightBraces = leftBrace.split("}");
+					if(rightBraces.length == 1) {
+						functionBodyLength += rightBraces[0].length;
+						continue;
+					}
+					var _g3 = 0;
+					var _g2 = rightBraces.length;
+					while(_g3 < _g2) {
+						var j = _g3++;
+						rightBrace = rightBraces[j];
+						if(j != 0) unClosedBraces--;
+						if(unClosedBraces == 0) break; else functionBodyLength += rightBrace.length;
+					}
+					if(unClosedBraces == 0) break;
+				}
+				functionDeclarations.push({ name : name, params : params, pos : pos, type : "", isPublic : isPublic, isStatic : isStatic, endPos : pos.pos + pos.len + functionBodyLength});
+			}
+			return "";
+		});
+		return functionDeclarations;
+	}
+	,__class__: outline.OutlineParser
 };
 var parser = {};
 parser.ClassParser = function() { };
@@ -15543,36 +16867,6 @@ parser.ClassParser.addClassName = function(name,std) {
 	}
 };
 parser.ClasspathWalker = function() {
-	var localStorage2 = js.Browser.getLocalStorage();
-	var paths = [js.Node.process.env.HAXEPATH,js.Node.process.env.HAXE_STD_PATH,js.Node.process.env.HAXE_HOME];
-	if(localStorage2 != null) {
-		var path = localStorage2.getItem("pathToHaxe");
-		paths.splice(0,0,path);
-	}
-	var _g = core.Utils.os;
-	switch(_g) {
-	case 0:
-		paths.push("C:/HaxeToolkit/haxe");
-		break;
-	case 1:case 2:
-		paths.push("/usr/lib/haxe");
-		break;
-	default:
-	}
-	var _g1 = 0;
-	while(_g1 < paths.length) {
-		var envVar = paths[_g1];
-		++_g1;
-		if(envVar != null) {
-			this.pathToHaxeStd = this.getHaxeStdFolder(envVar);
-			if(this.pathToHaxeStd != null) {
-				this.pathToHaxe = envVar;
-				localStorage2.setItem("pathToHaxe",this.pathToHaxe);
-				break;
-			}
-		}
-	}
-	if(this.pathToHaxeStd == null) this.showHaxeDirectoryDialog(); else this.parseClasspath(this.pathToHaxeStd,true);
 };
 $hxClasses["parser.ClasspathWalker"] = parser.ClasspathWalker;
 parser.ClasspathWalker.__name__ = ["parser","ClasspathWalker"];
@@ -15583,6 +16877,41 @@ parser.ClasspathWalker.get = function() {
 parser.ClasspathWalker.prototype = {
 	pathToHaxeStd: null
 	,pathToHaxe: null
+	,load: function() {
+		var localStorage2 = js.Browser.getLocalStorage();
+		var pathToHaxe2 = js.Node.process.env.HAXE_STD_PATH;
+		if(pathToHaxe2 != null) pathToHaxe2 = js.Node.require("path").dirname(pathToHaxe2);
+		var paths = [js.Node.process.env.HAXEPATH,pathToHaxe2,js.Node.process.env.HAXE_HOME];
+		if(localStorage2 != null) {
+			var path = localStorage2.getItem("pathToHaxe");
+			paths.splice(0,0,path);
+		}
+		var _g = core.Utils.os;
+		switch(_g) {
+		case 0:
+			paths.push("C:/HaxeToolkit/haxe");
+			break;
+		case 1:case 2:
+			paths.push("/usr/lib/haxe");
+			break;
+		default:
+		}
+		var _g1 = 0;
+		while(_g1 < paths.length) {
+			var envVar = paths[_g1];
+			++_g1;
+			if(envVar != null) {
+				this.pathToHaxeStd = this.getHaxeStdFolder(envVar);
+				if(this.pathToHaxeStd != null) {
+					this.pathToHaxe = envVar;
+					localStorage2.setItem("pathToHaxe",this.pathToHaxe);
+					core.HaxeHelper.updatePathToHaxe();
+					break;
+				}
+			}
+		}
+		if(this.pathToHaxeStd == null) this.showHaxeDirectoryDialog(); else this.parseClasspath(this.pathToHaxeStd,true);
+	}
 	,showHaxeDirectoryDialog: function() {
 		var _g = this;
 		var localStorage2 = js.Browser.getLocalStorage();
@@ -15595,6 +16924,7 @@ parser.ClasspathWalker.prototype = {
 				_g.parseClasspath(_g.pathToHaxeStd,true);
 				_g.pathToHaxe = path;
 				localStorage2.setItem("pathToHaxe",_g.pathToHaxe);
+				core.HaxeHelper.updatePathToHaxe();
 				dialogs.DialogManager.hide();
 			} else Alertify.error(watchers.LocaleWatcher.getStringSync("Can't find 'std' folder in specified path"));
 		},currentLocation,"Download Haxe","http://haxe.org/download");
@@ -15609,41 +16939,67 @@ parser.ClasspathWalker.prototype = {
 			break;
 		default:
 		}
-		if(js.Node.require("fs").existsSync(js.Node.require("path").join(path,fileName))) {
-			if(js.Node.require("fs").existsSync(path)) {
-				if(js.Node.require("fs").existsSync(js.Node.require("path").join(path,"Std.hx"))) pathToStd = path; else {
-					path = js.Node.require("path").join(path,"std");
-					if(js.Node.require("fs").existsSync(path)) pathToStd = this.getHaxeStdFolder(path);
-				}
+		if(js.Node.require("fs").existsSync(path)) {
+			if(js.Node.require("fs").existsSync(js.Node.require("path").join(path,fileName))) {
+				path = js.Node.require("path").join(path,"std");
+				if(js.Node.require("fs").existsSync(path)) pathToStd = path;
 			}
 		}
 		return pathToStd;
 	}
-	,parseProjectArguments: function() {
+	,getProjectClasspaths: function(project,onComplete) {
 		var _g1 = this;
+		var classpathsAndLibs = null;
+		var _g = project.type;
+		switch(_g) {
+		case 0:case 2:
+			var path;
+			if(project.type == 0) path = js.Node.require("path").join(projectaccess.ProjectAccess.path,project.targetData[project.target].pathToHxml); else path = js.Node.require("path").join(projectaccess.ProjectAccess.path,project.main);
+			var options = { };
+			options.encoding = "utf8";
+			var data = js.Node.require("fs").readFileSync(path,options);
+			classpathsAndLibs = this.getClasspaths(data.split("\n"));
+			this.processHaxelibs(classpathsAndLibs.libs,function(libs) {
+				var classpathsAndLibs2 = { classpaths : classpathsAndLibs.classpaths, libs : libs};
+				onComplete(classpathsAndLibs2);
+			});
+			break;
+		case 1:
+			openflproject.OpenFLTools.getParams(projectaccess.ProjectAccess.path,project.openFLTarget,function(stdout) {
+				classpathsAndLibs = _g1.getClasspaths(stdout.split("\n"));
+				_g1.processHaxelibs(classpathsAndLibs.libs,function(libs1) {
+					var classpathsAndLibs21 = { classpaths : classpathsAndLibs.classpaths, libs : libs1};
+					onComplete(classpathsAndLibs21);
+				});
+			});
+			break;
+		default:
+		}
+	}
+	,parseProjectArguments: function() {
+		var _g2 = this;
 		parser.ClassParser.classCompletions = new haxe.ds.StringMap();
 		parser.ClassParser.filesList = [];
 		parser.ClassParser.topLevelClassList = [];
 		parser.ClassParser.importsList = [];
 		if(projectaccess.ProjectAccess.path != null) {
 			var project = projectaccess.ProjectAccess.currentProject;
-			var _g = project.type;
-			switch(_g) {
-			case 0:case 2:
-				var path;
-				if(project.type == 0) path = js.Node.require("path").join(projectaccess.ProjectAccess.path,project.targetData[project.target].pathToHxml); else path = js.Node.require("path").join(projectaccess.ProjectAccess.path,project.main);
-				var options = { };
-				options.encoding = "utf8";
-				var data = js.Node.require("fs").readFileSync(path,options);
-				this.getClasspaths(data.split("\n"));
-				break;
-			case 1:
-				openflproject.OpenFLTools.getParams(projectaccess.ProjectAccess.path,project.openFLTarget,function(stdout) {
-					_g1.getClasspaths(stdout.split("\n"));
-				});
-				break;
-			default:
-			}
+			this.getProjectClasspaths(project,function(classpathsAndLibs) {
+				var _g = 0;
+				var _g1 = classpathsAndLibs.classpaths;
+				while(_g < _g1.length) {
+					var path = _g1[_g];
+					++_g;
+					_g2.parseClasspath(path);
+				}
+				var _g3 = 0;
+				var _g11 = classpathsAndLibs.libs;
+				while(_g3 < _g11.length) {
+					var lib = _g11[_g3];
+					++_g3;
+					_g2.parseClasspath(lib.path,lib.std);
+				}
+			});
 		}
 		this.walkProjectDirectory(projectaccess.ProjectAccess.path);
 	}
@@ -15662,41 +17018,41 @@ parser.ClasspathWalker.prototype = {
 			var classpath = js.Node.require("path").resolve(projectaccess.ProjectAccess.path,arg);
 			classpaths.push(classpath);
 		}
-		var _g2 = 0;
-		while(_g2 < classpaths.length) {
-			var path = classpaths[_g2];
-			++_g2;
-			this.parseClasspath(path);
-		}
 		var libs = this.parseArg(data,"-lib");
-		this.processHaxelibs(libs,$bind(this,this.parseClasspath));
+		return { classpaths : classpaths, libs : libs};
 	}
-	,processHaxelibs: function(libs,onPath) {
-		var _g = 0;
-		while(_g < libs.length) {
-			var arg = libs[_g];
-			++_g;
-			var processHelper = core.ProcessHelper.get();
-			processHelper.runProcess("haxelib",["path",arg],null,(function() {
-				return function(stdout,stderr) {
-					var _g1 = 0;
-					var _g2 = stdout.split("\n");
-					while(_g1 < _g2.length) {
-						var path = [_g2[_g1]];
-						++_g1;
-						if(path[0].indexOf(js.Node.require("path").sep) != -1) {
-							path[0] = StringTools.trim(path[0]);
-							path[0] = js.Node.require("path").normalize(path[0]);
-							js.Node.require("fs").exists(path[0],(function(path) {
-								return function(exists) {
-									if(exists) onPath(path[0],false);
-								};
-							})(path));
+	,processHaxelibs: function(libs,onComplete) {
+		var n = libs.length;
+		var classpaths = [];
+		if(n > 0) {
+			var _g = 0;
+			while(_g < libs.length) {
+				var arg = libs[_g];
+				++_g;
+				var processHelper = core.ProcessHelper.get();
+				processHelper.runProcess(core.HaxeHelper.getPathToHaxelib(),["path",arg],null,(function() {
+					return function(stdout,stderr) {
+						n--;
+						var _g1 = 0;
+						var _g2 = stdout.split("\n");
+						while(_g1 < _g2.length) {
+							var path = [_g2[_g1]];
+							++_g1;
+							if(path[0].indexOf(js.Node.require("path").sep) != -1) {
+								path[0] = StringTools.trim(path[0]);
+								path[0] = js.Node.require("path").normalize(path[0]);
+								js.Node.require("fs").exists(path[0],(function(path) {
+									return function(exists) {
+										if(exists) classpaths.push({ path : path[0], std : false});
+									};
+								})(path));
+							}
 						}
-					}
-				};
-			})());
-		}
+						if(n == 0) onComplete(classpaths);
+					};
+				})());
+			}
+		} else onComplete(classpaths);
 	}
 	,parseArg: function(args,type) {
 		var result = [];
@@ -15801,6 +17157,7 @@ parser.ClasspathWalker.prototype = {
 	,__class__: parser.ClasspathWalker
 };
 parser.OutlineHelper = function() {
+	this.outlineParser = new outline.OutlineParser();
 };
 $hxClasses["parser.OutlineHelper"] = parser.OutlineHelper;
 parser.OutlineHelper.__name__ = ["parser","OutlineHelper"];
@@ -15809,12 +17166,13 @@ parser.OutlineHelper.get = function() {
 	return parser.OutlineHelper.instance;
 };
 parser.OutlineHelper.prototype = {
-	pathToLastFile: null
+	outlineParser: null
+	,pathToLastFile: null
 	,getList: function(data,path) {
-		var ast = parser.ClassParser.parse(data,path);
 		var outlinePanel = core.OutlinePanel.get();
-		if(ast != null) {
-			var parsedData = this.parseDeclarations(ast);
+		var outlineItems = this.outlineParser.parse(data,path);
+		if(outlineItems != null) {
+			var parsedData = this.parseOutlineItems(outlineItems);
 			var mainClass = js.Node.require("path").basename(path);
 			var rootItem = { label : mainClass};
 			rootItem.items = parsedData.treeItems;
@@ -15823,263 +17181,70 @@ parser.OutlineHelper.prototype = {
 			outlinePanel.clearFields();
 			outlinePanel.addField(rootItem);
 			outlinePanel.update();
-		} else if(this.pathToLastFile != path) {
-			outlinePanel.clearFields();
-			outlinePanel.update();
+			new outline.OutlineFormatter(parsedData.treeItemFormats);
 		}
 	}
-	,parseDeclarations: function(ast) {
+	,parseOutlineItems: function(outlineItems) {
 		var fileImports = [];
 		var treeItems = [];
+		var treeItemFormats = [];
 		var _g = 0;
-		var _g1 = ast.decls;
-		while(_g < _g1.length) {
-			var decl = _g1[_g];
+		while(_g < outlineItems.length) {
+			var outlineItem = outlineItems[_g];
 			++_g;
-			{
-				var _g2 = decl.decl;
-				switch(_g2[1]) {
-				case 3:
-					var mode = _g2[3];
-					var sl = _g2[2];
-					fileImports = fileImports.concat(this.parseImports(sl,mode));
-					break;
-				case 5:
-					var path = _g2[2];
-					break;
-				case 2:
-					var data = _g2[2];
-					var treeItem = { label : data.name};
-					treeItem.expanded = true;
-					treeItems.push(treeItem);
-					break;
-				case 0:
-					var data1 = _g2[2];
-					var treeItem1 = { label : data1.name};
-					var items = [];
-					treeItem1.items = items;
-					treeItem1.expanded = true;
-					var _g3 = 0;
-					var _g4 = this.getClassFields(data1);
-					while(_g3 < _g4.length) {
-						var item = _g4[_g3];
-						++_g3;
-						items.push({ label : item.name, value : item.pos});
-					}
-					treeItems.push(treeItem1);
-					break;
-				case 1:
-					var data2 = _g2[2];
-					var treeItem2 = { label : data2.name};
-					var items1 = [];
-					treeItem2.items = items1;
-					treeItem2.expanded = true;
-					treeItems.push(treeItem2);
-					var _g31 = 0;
-					var _g41 = data2.data;
-					while(_g31 < _g41.length) {
-						var item1 = _g41[_g31];
-						++_g31;
-						items1.push({ label : item1.name, value : { min : item1.pos.min, max : item1.pos.max}});
-					}
-					break;
-				case 4:
-					var data3 = _g2[2];
-					var treeItem3 = { label : data3.name};
-					var items2 = [];
-					treeItem3.items = items2;
-					treeItem3.expanded = true;
-					treeItems.push(treeItem3);
-					var _g32 = 0;
-					var _g42 = this.getTypeDefFields(data3);
-					while(_g32 < _g42.length) {
-						var item2 = _g42[_g32];
-						++_g32;
-						items2.push({ label : item2.name, value : item2.pos});
-					}
-					break;
-				}
-			}
-		}
-		return { fileImports : fileImports, treeItems : treeItems};
-	}
-	,parseImports: function(sl,mode) {
-		var fileImports = [];
-		var importPackages = [];
-		var _g = 0;
-		while(_g < sl.length) {
-			var item = sl[_g];
-			++_g;
-			importPackages.push(item.pack);
-		}
-		var fullImportName = importPackages.join(".");
-		switch(mode[1]) {
-		case 0:
-			fileImports.push(fullImportName);
-			break;
-		case 1:
-			var s = mode[2];
-			fileImports.push(s);
-			break;
-		case 2:
-			fileImports.push(fullImportName);
-			var _g1 = 0;
-			var _g11 = [parser.ClassParser.importsList,parser.ClassParser.haxeStdImports];
-			while(_g1 < _g11.length) {
-				var list = _g11[_g1];
-				++_g1;
+			var _g1 = outlineItem.type;
+			switch(_g1) {
+			case "class":
+				var treeItem = { label : outlineItem.name};
+				var items = [];
+				treeItem.items = items;
+				treeItem.expanded = true;
+				treeItemFormats.push({ type : outlineItem.type, isPublic : true, isStatic : false});
 				var _g2 = 0;
-				while(_g2 < list.length) {
-					var item1 = list[_g2];
+				var _g3 = outlineItem.fields;
+				while(_g2 < _g3.length) {
+					var item = _g3[_g2];
 					++_g2;
-					if(item1.indexOf(fullImportName) == 0) fileImports.push(item1);
+					items.push({ label : item.name, value : { min : item.pos, max : item.pos + item.len}});
+					treeItemFormats.push({ type : item.type, isPublic : item.isPublic, isStatic : item.isStatic});
 				}
-			}
-			break;
-		}
-		return fileImports;
-	}
-	,getClassFields: function(type) {
-		var fields = [];
-		var _g1 = 0;
-		var _g = type.data.length;
-		while(_g1 < _g) {
-			var i = _g1++;
-			{
-				var _g2 = type.data[i].kind;
-				switch(_g2[1]) {
-				case 1:
-					var f = _g2[2];
-					var data = type.data[i].name + "(";
-					var args = [];
-					var _g3 = 0;
-					var _g4 = f.args;
-					while(_g3 < _g4.length) {
-						var item = _g4[_g3];
-						++_g3;
-						args.push(this.getFieldNameAndType(item.name,item.type));
-					}
-					data += args.join(", ");
-					data += ")";
-					if(f.ret != null) data += ":" + this.getFieldType(f.ret);
-					fields.push({ name : data, pos : { min : type.data[i].pos.min, max : type.data[i].pos.max}});
-					break;
-				case 0:
-					var e = _g2[3];
-					var t = _g2[2];
-					fields.push({ name : this.getFieldNameAndType(type.data[i].name,t), pos : { min : type.data[i].pos.min, max : type.data[i].pos.max}});
-					break;
-				case 2:
-					var e1 = _g2[5];
-					var t1 = _g2[4];
-					var set = _g2[3];
-					var get = _g2[2];
-					fields.push({ name : type.data[i].name, pos : { min : type.data[i].pos.min, max : type.data[i].pos.max}});
-					break;
+				treeItems.push(treeItem);
+				break;
+			case "typedef":
+				var treeItem1 = { label : outlineItem.name};
+				var items1 = [];
+				treeItem1.items = items1;
+				treeItem1.expanded = true;
+				treeItemFormats.push({ type : "typedef", isPublic : true, isStatic : false});
+				var _g21 = 0;
+				var _g31 = outlineItem.fields;
+				while(_g21 < _g31.length) {
+					var item1 = _g31[_g21];
+					++_g21;
+					items1.push({ label : item1.name, value : { min : item1.pos, max : item1.pos + item1.len}});
+					treeItemFormats.push({ type : item1.type, isPublic : true, isStatic : item1.isStatic});
 				}
-			}
-		}
-		return fields;
-	}
-	,getTypeDefFields: function(type) {
-		var typeDefFields = [];
-		{
-			var _g = type.data;
-			switch(_g[1]) {
-			case 0:
-				var p = _g[2];
+				treeItems.push(treeItem1);
 				break;
-			case 1:
-				var ret = _g[3];
-				var args = _g[2];
-				break;
-			case 2:
-				var fields = _g[2];
-				var _g1 = 0;
-				while(_g1 < fields.length) {
-					var field = fields[_g1];
-					++_g1;
-					{
-						var _g2 = field.kind;
-						switch(_g2[1]) {
-						case 1:
-							var f = _g2[2];
-							var data = field.name + "(";
-							var args1 = [];
-							var _g3 = 0;
-							var _g4 = f.args;
-							while(_g3 < _g4.length) {
-								var item = _g4[_g3];
-								++_g3;
-								args1.push(this.getFieldNameAndType(item.name,item.type));
-							}
-							data += args1.join(", ");
-							data += ")";
-							if(f.ret != null) data += ":" + this.getFieldType(f.ret);
-							typeDefFields.push({ name : data, pos : { min : field.pos.min, max : field.pos.max}});
-							break;
-						case 0:
-							var e = _g2[3];
-							var t = _g2[2];
-							typeDefFields.push({ name : this.getFieldNameAndType(field.name,t), pos : { min : field.pos.min, max : field.pos.max}});
-							break;
-						case 2:
-							var e1 = _g2[5];
-							var t1 = _g2[4];
-							var set = _g2[3];
-							var get = _g2[2];
-							typeDefFields.push({ name : field.name, pos : { min : field.pos.min, max : field.pos.max}});
-							break;
-						}
-					}
+			case "enum":
+				var treeItem2 = { label : outlineItem.name};
+				var items2 = [];
+				treeItem2.items = items2;
+				treeItem2.expanded = true;
+				treeItemFormats.push({ type : "enumGroup", isPublic : true, isStatic : false});
+				var _g22 = 0;
+				var _g32 = outlineItem.fields;
+				while(_g22 < _g32.length) {
+					var item2 = _g32[_g22];
+					++_g22;
+					items2.push({ label : item2.name, value : item2.pos});
+					treeItemFormats.push({ type : "enum", isPublic : true, isStatic : false});
 				}
-				break;
-			case 3:
-				var t2 = _g[2];
-				break;
-			case 4:
-				var fields1 = _g[3];
-				var p1 = _g[2];
-				break;
-			case 5:
-				var t3 = _g[2];
+				treeItems.push(treeItem2);
 				break;
 			}
 		}
-		return typeDefFields;
-	}
-	,getFieldType: function(t) {
-		var name = null;
-		if(t != null) switch(t[1]) {
-		case 0:
-			var p = t[2];
-			name = p.name;
-			break;
-		case 1:
-			var ret = t[3];
-			var args = t[2];
-			break;
-		case 2:
-			var fields = t[2];
-			break;
-		case 3:
-			var t1 = t[2];
-			break;
-		case 4:
-			var fields1 = t[3];
-			var p1 = t[2];
-			break;
-		case 5:
-			var t2 = t[2];
-			break;
-		}
-		return name;
-	}
-	,getFieldNameAndType: function(name,type) {
-		var nameAndType = name;
-		var fieldType = this.getFieldType(type);
-		if(fieldType != null) nameAndType += ":" + fieldType;
-		return nameAndType;
+		return { fileImports : fileImports, treeItems : treeItems, treeItemFormats : treeItemFormats};
 	}
 	,__class__: parser.OutlineHelper
 };
@@ -16109,7 +17274,8 @@ parser.RegexParser.getTypeDeclarations = function(data) {
 	var typeDeclarations = [];
 	var ereg = new EReg("(class|typedef|enum|typedef|abstract) +([A-Z][a-zA-Z0-9_]*) *(<[a-zA-Z0-9_,]+>)?","gm");
 	ereg.map(data,function(ereg2) {
-		var typeDeclaration = { type : ereg2.matched(1), name : ereg2.matched(2)};
+		var pos = ereg.matchedPos();
+		var typeDeclaration = { type : ereg2.matched(1), name : ereg2.matched(2), pos : pos};
 		typeDeclarations.push(typeDeclaration);
 		return "";
 	});
@@ -16121,13 +17287,14 @@ parser.RegexParser.getFunctionDeclarations = function(data) {
 	var eregFunctionWithParameters = new EReg("function *([a-zA-Z0-9_]*) *\\(([^\\)]*)","gm");
 	var eregParamDefault = new EReg("(= *\"*[^\"]*\")","gm");
 	eregFunctionWithParameters.map(data,function(ereg2) {
+		var pos = ereg2.matchedPos();
 		var name = ereg2.matched(1);
 		if(name != null) {
 			if(name != "new") {
 				var params = null;
 				var str = ereg2.matched(2);
 				if(str != null) params = str.split(",");
-				functionDeclarations.push({ name : name, params : params});
+				functionDeclarations.push({ name : name, params : params, pos : pos});
 			}
 		}
 		return "";
@@ -16196,172 +17363,196 @@ parser.RegexParser.getFunctionParameters = function(data,pos) {
 	return functionParams;
 };
 var pluginloader = {};
-pluginloader.PluginManager = function() { };
+pluginloader.PluginManager = function() {
+	this.pluginsTestingData = "  - cd plugins";
+	this.firstRun = false;
+	this.pluginsMTime = new haxe.ds.StringMap();
+	this.requestedPluginsData = new Array();
+	this.inactivePlugins = [];
+	this.pathToPlugins = new haxe.ds.StringMap();
+};
 $hxClasses["pluginloader.PluginManager"] = pluginloader.PluginManager;
 pluginloader.PluginManager.__name__ = ["pluginloader","PluginManager"];
-pluginloader.PluginManager.loadPlugins = function(compile) {
-	if(compile == null) compile = true;
-	var pathToPluginsFolder = "plugins";
-	if(!js.Node.require("fs").existsSync(pathToPluginsFolder)) js.Node.require("fs").mkdirSync(pathToPluginsFolder);
-	var pathToPluginsMTime = "pluginsMTime.dat";
-	var args;
-	if(js.Node.require("fs").existsSync(pathToPluginsMTime)) {
-		var options = { };
-		options.encoding = "utf8";
-		var data = js.Node.require("fs").readFileSync(pathToPluginsMTime,options);
-		if(data != "") pluginloader.PluginManager.pluginsMTime = haxe.Unserializer.run(data);
-	} else pluginloader.PluginManager.firstRun = true;
-	pluginloader.PluginManager.readDir(pathToPluginsFolder,"",function(path,pathToPlugin) {
-		var pluginName = StringTools.replace(pathToPlugin,js.Node.require("path").sep,".");
-		var relativePathToPlugin = js.Node.require("path").join(path,pathToPlugin);
-		pluginloader.PluginManager.pathToPlugins.set(pluginName,relativePathToPlugin);
-		var absolutePathToPlugin = js.Node.require("path").resolve(relativePathToPlugin);
-		if(pluginloader.PluginManager.firstRun) pluginloader.PluginManager.pluginsMTime.set(pluginName,Std.parseInt(Std.string(new Date().getTime())));
-		if(compile && (!pluginloader.PluginManager.pluginsMTime.exists(pluginName) || pluginloader.PluginManager.pluginsMTime.get(pluginName) < pluginloader.PluginManager.walk(absolutePathToPlugin))) pluginloader.PluginManager.compilePlugin(pluginName,absolutePathToPlugin,pluginloader.PluginManager.loadPlugin); else pluginloader.PluginManager.loadPlugin(absolutePathToPlugin);
-	});
-	haxe.Timer.delay(function() {
-		if(pluginloader.PluginManager.requestedPluginsData.length > 0) {
-			console.log("still not loaded plugins: ");
-			var _g = 0;
-			var _g1 = pluginloader.PluginManager.requestedPluginsData;
-			while(_g < _g1.length) {
-				var pluginData = _g1[_g];
-				++_g;
-				console.log(pluginData.name + ": can't load plugin, required plugins are not found");
-				console.log(pluginData.plugins);
+pluginloader.PluginManager.get = function() {
+	if(pluginloader.PluginManager.instance == null) pluginloader.PluginManager.instance = new pluginloader.PluginManager();
+	return pluginloader.PluginManager.instance;
+};
+pluginloader.PluginManager.prototype = {
+	pathToPlugins: null
+	,inactivePlugins: null
+	,requestedPluginsData: null
+	,pluginsMTime: null
+	,firstRun: null
+	,pluginsTestingData: null
+	,loadPlugins: function(compile) {
+		if(compile == null) compile = true;
+		var _g = this;
+		var pathToPluginsFolder = "plugins";
+		if(!js.Node.require("fs").existsSync(pathToPluginsFolder)) js.Node.require("fs").mkdirSync(pathToPluginsFolder);
+		var pathToPluginsMTime = "pluginsMTime.dat";
+		var args;
+		if(js.Node.require("fs").existsSync(pathToPluginsMTime)) {
+			var options = { };
+			options.encoding = "utf8";
+			var data = js.Node.require("fs").readFileSync(pathToPluginsMTime,options);
+			if(data != "") this.pluginsMTime = haxe.Unserializer.run(data);
+		} else this.firstRun = true;
+		this.readDir(pathToPluginsFolder,"",function(path,pathToPlugin) {
+			var pluginName = StringTools.replace(pathToPlugin,js.Node.require("path").sep,".");
+			var relativePathToPlugin = js.Node.require("path").join(path,pathToPlugin);
+			_g.pathToPlugins.set(pluginName,relativePathToPlugin);
+			var absolutePathToPlugin = js.Node.require("path").resolve(relativePathToPlugin);
+			if(_g.firstRun) _g.pluginsMTime.set(pluginName,Std.parseInt(Std.string(new Date().getTime())));
+			if(compile && (!_g.pluginsMTime.exists(pluginName) || _g.pluginsMTime.get(pluginName) < _g.walk(absolutePathToPlugin))) _g.compilePlugin(pluginName,absolutePathToPlugin,$bind(_g,_g.loadPlugin)); else _g.loadPlugin(absolutePathToPlugin);
+		});
+		haxe.Timer.delay(function() {
+			if(_g.requestedPluginsData.length > 0) {
+				console.log("still not loaded plugins: ");
+				var _g1 = 0;
+				var _g2 = _g.requestedPluginsData;
+				while(_g1 < _g2.length) {
+					var pluginData = _g2[_g1];
+					++_g1;
+					console.log(pluginData.name + ": can't load plugin, required plugins are not found");
+					console.log(pluginData.plugins);
+				}
+				_g.savePluginsMTime();
 			}
-			pluginloader.PluginManager.savePluginsMTime();
-		}
-	},10000);
-};
-pluginloader.PluginManager.walk = function(pathToPlugin) {
-	var pathToItem;
-	var time = -1;
-	var mtime;
-	var extension;
-	var _g = 0;
-	var _g1 = js.Node.require("fs").readdirSync(pathToPlugin);
-	while(_g < _g1.length) {
-		var item = _g1[_g];
-		++_g;
-		pathToItem = js.Node.require("path").join(pathToPlugin,item);
-		var stat = js.Node.require("fs").statSync(pathToItem);
-		extension = js.Node.require("path").extname(pathToItem);
-		if(stat.isFile() && (extension == ".hx" || extension == ".hxml")) {
-			mtime = stat.mtime.getTime();
-			if(time < mtime) time = mtime;
-		} else if(stat.isDirectory()) {
-			mtime = pluginloader.PluginManager.walk(pathToItem);
-			if(time < mtime) time = mtime;
-		}
+		},10000);
 	}
-	return time;
-};
-pluginloader.PluginManager.readDir = function(path,pathToPlugin,onLoad) {
-	var pathToFolder;
-	js.Node.require("fs").readdir(js.Node.require("path").join(path,pathToPlugin),function(error,folders) {
-		if(error != null) console.log(error); else {
-			var _g = 0;
-			while(_g < folders.length) {
-				var item = [folders[_g]];
-				++_g;
-				if(item[0] != "inactive") {
-					pathToFolder = js.Node.require("path").join(path,pathToPlugin,item[0]);
-					js.Node.require("fs").stat(pathToFolder,(function(item) {
-						return function(error1,stat) {
-							if(error1 != null) {
-							} else {
-								var pluginName = StringTools.replace(pathToPlugin,js.Node.require("path").sep,".");
-								if(stat.isDirectory()) pluginloader.PluginManager.readDir(path,js.Node.require("path").join(pathToPlugin,item[0]),onLoad); else if(item[0] == "plugin.hxml" && !Lambda.has(pluginloader.PluginManager.inactivePlugins,pluginName)) {
-									var levels = "";
-									var _g2 = 0;
-									var _g1 = pathToPlugin.split("\\").length;
-									while(_g2 < _g1) {
-										var i = _g2++;
-										levels += "../";
+	,walk: function(pathToPlugin) {
+		var pathToItem;
+		var time = -1;
+		var mtime;
+		var extension;
+		var _g = 0;
+		var _g1 = js.Node.require("fs").readdirSync(pathToPlugin);
+		while(_g < _g1.length) {
+			var item = _g1[_g];
+			++_g;
+			pathToItem = js.Node.require("path").join(pathToPlugin,item);
+			var stat = js.Node.require("fs").statSync(pathToItem);
+			extension = js.Node.require("path").extname(pathToItem);
+			if(stat.isFile() && (extension == ".hx" || extension == ".hxml")) {
+				mtime = stat.mtime.getTime();
+				if(time < mtime) time = mtime;
+			} else if(stat.isDirectory()) {
+				mtime = this.walk(pathToItem);
+				if(time < mtime) time = mtime;
+			}
+		}
+		return time;
+	}
+	,readDir: function(path,pathToPlugin,onLoad) {
+		var _g1 = this;
+		var pathToFolder;
+		js.Node.require("fs").readdir(js.Node.require("path").join(path,pathToPlugin),function(error,folders) {
+			if(error != null) console.log(error); else {
+				var _g = 0;
+				while(_g < folders.length) {
+					var item = [folders[_g]];
+					++_g;
+					if(item[0] != "inactive") {
+						pathToFolder = js.Node.require("path").join(path,pathToPlugin,item[0]);
+						js.Node.require("fs").stat(pathToFolder,(function(item) {
+							return function(error1,stat) {
+								if(error1 != null) {
+								} else {
+									var pluginName = StringTools.replace(pathToPlugin,js.Node.require("path").sep,".");
+									if(stat.isDirectory()) _g1.readDir(path,js.Node.require("path").join(pathToPlugin,item[0]),onLoad); else if(item[0] == "plugin.hxml" && !Lambda.has(_g1.inactivePlugins,pluginName)) {
+										var levels = "";
+										var _g3 = 0;
+										var _g2 = pathToPlugin.split("\\").length;
+										while(_g3 < _g2) {
+											var i = _g3++;
+											levels += "../";
+										}
+										_g1.pluginsTestingData += "\n  - cd " + StringTools.replace(pathToPlugin,"\\","/") + "\n  - haxe plugin.hxml\n  - cd " + levels;
+										onLoad(path,pathToPlugin);
+										return;
 									}
-									pluginloader.PluginManager.pluginsTestingData += "\n  - cd " + StringTools.replace(pathToPlugin,"\\","/") + "\n  - haxe plugin.hxml\n  - cd " + levels;
-									onLoad(path,pathToPlugin);
-									return;
 								}
-							}
-						};
-					})(item));
+							};
+						})(item));
+					}
 				}
 			}
-		}
-	});
-};
-pluginloader.PluginManager.loadPlugin = function(pathToPlugin) {
-	var pathToMain = js.Node.require("path").join(pathToPlugin,"bin","Main.js");
-	js.Node.require("fs").exists(pathToMain,function(exists) {
-		if(exists) HIDE.loadJS(null,[pathToMain]); else console.log(pathToMain + " is not found/nPlease compile " + pathToPlugin + " plugin");
-	});
-};
-pluginloader.PluginManager.compilePlugin = function(name,pathToPlugin,onSuccess,onFailed) {
-	var pathToBin = js.Node.require("path").join(pathToPlugin,"bin");
-	js.Node.require("fs").exists(pathToBin,function(exists) {
-		if(exists) pluginloader.PluginManager.startPluginCompilation(name,pathToPlugin,onSuccess,onFailed); else js.Node.require("fs").mkdir(pathToBin,null,function(error) {
-			pluginloader.PluginManager.startPluginCompilation(name,pathToPlugin,onSuccess,onFailed);
 		});
-	});
-};
-pluginloader.PluginManager.startPluginCompilation = function(name,pathToPlugin,onSuccess,onFailed) {
-	var startTime = new Date().getTime();
-	var delta;
-	var command = ["haxe","--cwd",HIDE.surroundWithQuotes(pathToPlugin),"plugin.hxml"].join(" ");
-	console.log(command);
-	var haxeCompilerProcess = js.Node.require("child_process").exec(command,{ },function(err,stdout,stderr) {
-		if(err == null) {
-			delta = new Date().getTime() - startTime;
-			Std.string(console.log(name + " compilation took " + (delta == null?"null":"" + delta))) + " ms";
-			onSuccess(pathToPlugin);
-			pluginloader.PluginManager.pluginsMTime.set(name,Std.parseInt(Std.string(new Date().getTime())));
-		} else {
-			var element = window.document.getElementById("plugin-compilation-console");
-			var textarea;
-			if(element == null) {
-				var _this = window.document;
-				textarea = _this.createElement("textarea");
-				textarea.id = "plugin-compilation-console";
-				textarea.value = "Plugins compile-time errors:\n";
-				window.document.body.appendChild(textarea);
-			} else textarea = js.Boot.__cast(element , HTMLTextAreaElement);
-			console.log(pathToPlugin + " stderr: " + stderr);
-			textarea.value += name + "\n" + stderr + "\n";
-			console.log("can't load " + name + " plugin, compilation failed");
-			var regex = new EReg("haxelib install (.+) ","gim");
-			regex.map(stderr,function(ereg) {
-				console.log(ereg);
-				return "";
+	}
+	,loadPlugin: function(pathToPlugin) {
+		var pathToMain = js.Node.require("path").join(pathToPlugin,"bin","Main.js");
+		js.Node.require("fs").exists(pathToMain,function(exists) {
+			if(exists) HIDE.loadJS(null,[pathToMain]); else console.log(pathToMain + " is not found/nPlease compile " + pathToPlugin + " plugin");
+		});
+	}
+	,compilePlugin: function(name,pathToPlugin,onSuccess,onFailed) {
+		var _g = this;
+		var pathToBin = js.Node.require("path").join(pathToPlugin,"bin");
+		js.Node.require("fs").exists(pathToBin,function(exists) {
+			if(exists) _g.startPluginCompilation(name,pathToPlugin,onSuccess,onFailed); else js.Node.require("fs").mkdir(pathToBin,null,function(error) {
+				_g.startPluginCompilation(name,pathToPlugin,onSuccess,onFailed);
 			});
-			if(onFailed != null) onFailed(stderr);
-		}
-	});
-};
-pluginloader.PluginManager.savePluginsMTime = function() {
-	var pathToPluginsMTime = js.Node.require("path").join("..","pluginsMTime.dat");
-	var data = haxe.Serializer.run(pluginloader.PluginManager.pluginsMTime);
-	js.Node.require("fs").writeFile(pathToPluginsMTime,data,"utf8",function(error) {
-	});
-};
-pluginloader.PluginManager.compilePlugins = function(onComplete,onFailed) {
-	var pluginCount = Lambda.count(pluginloader.PluginManager.pathToPlugins);
-	var compiledPluginCount = 0;
-	var relativePathToPlugin;
-	var absolutePathToPlugin;
-	if(pluginCount > 0) {
-		var $it0 = pluginloader.PluginManager.pathToPlugins.keys();
-		while( $it0.hasNext() ) {
-			var name = $it0.next();
-			relativePathToPlugin = pluginloader.PluginManager.pathToPlugins.get(name);
-			absolutePathToPlugin = js.Node.require("path").resolve(relativePathToPlugin);
-			pluginloader.PluginManager.compilePlugin(name,absolutePathToPlugin,function() {
-				compiledPluginCount++;
-				if(compiledPluginCount == pluginCount) onComplete();
-			},onFailed);
-		}
-	} else onComplete();
+		});
+	}
+	,startPluginCompilation: function(name,pathToPlugin,onSuccess,onFailed) {
+		var _g = this;
+		var startTime = new Date().getTime();
+		var delta;
+		var command = ["haxe","--cwd",HIDE.surroundWithQuotes(pathToPlugin),"plugin.hxml"].join(" ");
+		console.log(command);
+		var haxeCompilerProcess = js.Node.require("child_process").exec(command,{ },function(err,stdout,stderr) {
+			if(err == null) {
+				delta = new Date().getTime() - startTime;
+				Std.string(console.log(name + " compilation took " + (delta == null?"null":"" + delta))) + " ms";
+				onSuccess(pathToPlugin);
+				_g.pluginsMTime.set(name,Std.parseInt(Std.string(new Date().getTime())));
+			} else {
+				var element = window.document.getElementById("plugin-compilation-console");
+				var textarea;
+				if(element == null) {
+					var _this = window.document;
+					textarea = _this.createElement("textarea");
+					textarea.id = "plugin-compilation-console";
+					textarea.value = "Plugins compile-time errors:\n";
+					window.document.body.appendChild(textarea);
+				} else textarea = js.Boot.__cast(element , HTMLTextAreaElement);
+				console.log(pathToPlugin + " stderr: " + stderr);
+				textarea.value += name + "\n" + stderr + "\n";
+				console.log("can't load " + name + " plugin, compilation failed");
+				var regex = new EReg("haxelib install (.+) ","gim");
+				regex.map(stderr,function(ereg) {
+					console.log(ereg);
+					return "";
+				});
+				if(onFailed != null) onFailed(stderr);
+			}
+		});
+	}
+	,savePluginsMTime: function() {
+		var pathToPluginsMTime = js.Node.require("path").join("..","pluginsMTime.dat");
+		var data = haxe.Serializer.run(this.pluginsMTime);
+		js.Node.require("fs").writeFile(pathToPluginsMTime,data,"utf8",function(error) {
+		});
+	}
+	,compilePlugins: function(onComplete,onFailed) {
+		var pluginCount = Lambda.count(this.pathToPlugins);
+		var compiledPluginCount = 0;
+		var relativePathToPlugin;
+		var absolutePathToPlugin;
+		if(pluginCount > 0) {
+			var $it0 = this.pathToPlugins.keys();
+			while( $it0.hasNext() ) {
+				var name = $it0.next();
+				relativePathToPlugin = this.pathToPlugins.get(name);
+				absolutePathToPlugin = js.Node.require("path").resolve(relativePathToPlugin);
+				this.compilePlugin(name,absolutePathToPlugin,function() {
+					compiledPluginCount++;
+					if(compiledPluginCount == pluginCount) onComplete();
+				},onFailed);
+			}
+		} else onComplete();
+	}
+	,__class__: pluginloader.PluginManager
 };
 var projectaccess = {};
 projectaccess.Project = function() {
@@ -16426,6 +17617,18 @@ projectaccess.ProjectAccess.isItemInIgnoreList = function(path) {
 		if(HxOverrides.indexOf(projectaccess.ProjectAccess.currentProject.hiddenItems,relativePath,0) != -1) ignore = true;
 	}
 	return ignore;
+};
+projectaccess.ProjectAccess.isItemHidden = function(path) {
+	var relativePath = js.Node.require("path").relative(projectaccess.ProjectAccess.path,path);
+	return HxOverrides.indexOf(projectaccess.ProjectAccess.currentProject.hiddenItems,relativePath,0) != -1;
+};
+projectaccess.ProjectAccess.hideItem = function(path) {
+	var relativePath = js.Node.require("path").relative(projectaccess.ProjectAccess.path,path);
+	projectaccess.ProjectAccess.currentProject.hiddenItems.push(relativePath);
+};
+projectaccess.ProjectAccess.unhideItem = function(path) {
+	var relativePath = js.Node.require("path").relative(projectaccess.ProjectAccess.path,path);
+	projectaccess.ProjectAccess.currentProject.hiddenItems.push(relativePath);
 };
 projectaccess.ProjectAccess.getPathToHxml = function() {
 	var pathToHxml = null;
@@ -16551,6 +17754,9 @@ projectaccess.ProjectOptions.prototype = {
 				break;
 			case "C#":
 				project.target = 6;
+				break;
+			case "Python":
+				project.target = 7;
 				break;
 			default:
 				throw "Unknown target";
@@ -16924,8 +18130,8 @@ tabmanager.Tab = function(_name,_path,_doc,_save) {
 	var _this1 = window.document;
 	this.span3 = _this1.createElement("span");
 	this.span3.textContent = this.name + "\t";
-	this.span3.addEventListener("click",function(e) {
-		tabManagerInstance.selectDoc(_g.path);
+	this.li.addEventListener("click",function(e) {
+		if(e.button != 1) tabManagerInstance.selectDoc(_g.path); else tabManagerInstance.closeTab(_g.path);
 	});
 	this.li.addEventListener("contextmenu",function(e1) {
 		tabmanager.ContextMenu.showMenu(_g.path,e1);
@@ -16938,6 +18144,7 @@ tabmanager.Tab = function(_name,_path,_doc,_save) {
 	span.style.top = "2px";
 	span.addEventListener("click",function(e2) {
 		tabManagerInstance.closeTab(_g.path);
+		e2.stopPropagation();
 	});
 	var span2;
 	var _this3 = window.document;
@@ -17117,7 +18324,44 @@ tabmanager.TabManager.prototype = {
 			_g.createNewFile(_selectedPath);
 		}); else this.createNewFile(path);
 	}
+	,resolvePackage: function(pathToFile,onComplete) {
+		var pathToProject = projectaccess.ProjectAccess.path;
+		var filePackage = "";
+		if(pathToProject != null) {
+			var classpathWalker = parser.ClasspathWalker.get();
+			classpathWalker.getProjectClasspaths(projectaccess.ProjectAccess.currentProject,function(classpathAndLibs) {
+				var classpaths = [];
+				var _g = 0;
+				var _g1 = classpathAndLibs.classpaths;
+				while(_g < _g1.length) {
+					var item = _g1[_g];
+					++_g;
+					classpaths.push(item);
+				}
+				var _g2 = 0;
+				var _g11 = classpathAndLibs.libs;
+				while(_g2 < _g11.length) {
+					var item1 = _g11[_g2];
+					++_g2;
+					classpaths.push(item1.path);
+				}
+				var _g3 = 0;
+				while(_g3 < classpaths.length) {
+					var classpath = classpaths[_g3];
+					++_g3;
+					if(StringTools.startsWith(pathToFile,classpath)) {
+						var dirname = js.Node.require("path").dirname(pathToFile);
+						var relativePath = js.Node.require("path").relative(classpath,dirname);
+						var fullPackagePath = StringTools.replace(relativePath,js.Node.require("path").sep,".");
+						filePackage = fullPackagePath;
+					}
+				}
+				onComplete(filePackage);
+			});
+		} else onComplete(filePackage);
+	}
 	,createNewFile: function(path) {
+		var _g = this;
 		var name = js.Node.require("path").basename(path);
 		var mode = this.getMode(name);
 		var code = "";
@@ -17127,19 +18371,39 @@ tabmanager.TabManager.prototype = {
 			path = HxOverrides.substr(path,0,path.length - name.length) + HxOverrides.substr(name,0,1).toUpperCase() + HxOverrides.substr(name,1,null);
 			var options = { };
 			options.encoding = "utf8";
-			var pathToTemplate = js.Node.require("path").join("core","templates","New.hx");
+			var pathToTemplate = js.Node.require("path").join("core","templates","New.tpl");
 			var templateCode = js.Node.require("fs").readFileSync(pathToTemplate,options);
-			code = mustache.Mustache.render(templateCode,{ name : js.Node.require("path").basename(name,extname), pack : "", author : ""});
+			this.resolvePackage(path,function(filePackage) {
+				var data = { };
+				data.name = js.Node.require("path").basename(name,extname);
+				_g.generateTemplate(data,filePackage);
+				code = new haxe.Template(templateCode).execute(data);
+				_g.createNewDoc(path,name,code,mode);
+			});
 			break;
 		case ".hxml":
 			var options1 = { };
 			options1.encoding = "utf8";
-			var pathToTemplate1 = js.Node.require("path").join("core","templates","build.hxml");
+			var pathToTemplate1 = js.Node.require("path").join("core","templates","build.tpl");
 			var templateCode1 = js.Node.require("fs").readFileSync(pathToTemplate1,options1);
 			code = templateCode1;
+			this.createNewDoc(path,name,code,mode);
 			break;
 		default:
+			this.createNewDoc(path,name,code,mode);
 		}
+	}
+	,generateTemplate: function(data,filePackage) {
+		data.pack = filePackage;
+		var project = projectaccess.ProjectAccess.currentProject;
+		if(project != null) {
+			data.author = project.company;
+			data.license = project.license;
+			data.url = project.url;
+		}
+		return data;
+	}
+	,createNewDoc: function(path,name,code,mode) {
 		var doc = new CodeMirror.Doc(code,mode);
 		this.createNewTab(name,path,doc,true);
 		this.selectDoc(path);
@@ -17878,7 +19142,8 @@ watchers.SettingsWatcher.parse = function() {
 	options.encoding = "utf8";
 	var data = js.Node.require("fs").readFileSync(watchers.SettingsWatcher.pathToSettings,options);
 	watchers.SettingsWatcher.settings = tjson.TJSON.parse(data);
-	watchers.ThemeWatcher.load();
+	var themeWatcher = watchers.ThemeWatcher.get();
+	themeWatcher.load();
 	watchers.LocaleWatcher.load();
 	if(projectaccess.ProjectAccess.path != null) {
 		var fileTree = filetree.FileTree.get();
@@ -17904,50 +19169,72 @@ watchers.SettingsWatcher.isItemInIgnoreList = function(path) {
 watchers.SnippetsWatcher = function() { };
 $hxClasses["watchers.SnippetsWatcher"] = watchers.SnippetsWatcher;
 watchers.SnippetsWatcher.__name__ = ["watchers","SnippetsWatcher"];
-watchers.SnippetsWatcher.load = function() {
-	var pathToFile = js.Node.require("path").join(watchers.SettingsWatcher.pathToFolder,"snippets.json");
-	watchers.SnippetsWatcher.watcher = watchers.Watcher.watchFileForUpdates(pathToFile,function() {
-		completion.SnippetsCompletion.load();
-	},1000);
-	nodejs.webkit.Window.get().on("close",function(e) {
-		if(watchers.SnippetsWatcher.watcher != null) watchers.SnippetsWatcher.watcher.close();
-	});
+watchers.SnippetsWatcher.get = function() {
+	if(watchers.SnippetsWatcher.instance == null) watchers.SnippetsWatcher.instance = new watchers.ThemeWatcher();
+	return watchers.SnippetsWatcher.instance;
 };
-watchers.ThemeWatcher = function() { };
+watchers.ThemeWatcher = function() {
+	this.listenerAdded = false;
+};
 $hxClasses["watchers.ThemeWatcher"] = watchers.ThemeWatcher;
 watchers.ThemeWatcher.__name__ = ["watchers","ThemeWatcher"];
-watchers.ThemeWatcher.load = function() {
-	watchers.ThemeWatcher.pathToTheme = js.Node.require("path").join("core",watchers.SettingsWatcher.settings.theme);
-	js.Node.require("fs").exists(watchers.ThemeWatcher.pathToTheme,function(exists) {
-		if(exists) watchers.ThemeWatcher.continueLoading(); else Alertify.log("File " + watchers.ThemeWatcher.pathToTheme + " for theme " + watchers.SettingsWatcher.settings.theme + " was not found. CSS files in core folder: [" + watchers.ThemeWatcher.getListOfCSSFiles().join(",") + "]","",10000);
-	});
+watchers.ThemeWatcher.get = function() {
+	if(watchers.ThemeWatcher.instance == null) watchers.ThemeWatcher.instance = new watchers.ThemeWatcher();
+	return watchers.ThemeWatcher.instance;
 };
-watchers.ThemeWatcher.continueLoading = function() {
-	watchers.ThemeWatcher.updateTheme();
-	if(watchers.ThemeWatcher.watcher != null) watchers.ThemeWatcher.watcher.close();
-	watchers.ThemeWatcher.watcher = watchers.Watcher.watchFileForUpdates(watchers.ThemeWatcher.pathToTheme,function() {
-		watchers.ThemeWatcher.updateTheme();
-	},1000);
-	if(!watchers.ThemeWatcher.listenerAdded) {
-		nodejs.webkit.Window.get().on("close",function(e) {
-			if(watchers.ThemeWatcher.watcher != null) watchers.ThemeWatcher.watcher.close();
+watchers.ThemeWatcher.prototype = {
+	watcher: null
+	,listenerAdded: null
+	,pathToTheme: null
+	,currentTheme: null
+	,load: function() {
+		var _g = this;
+		this.pathToTheme = js.Node.require("path").join("core",watchers.SettingsWatcher.settings.theme);
+		js.Node.require("fs").exists(this.pathToTheme,function(exists) {
+			if(exists) _g.continueLoading(); else Alertify.log("File " + _g.pathToTheme + " for theme " + watchers.SettingsWatcher.settings.theme + " was not found. CSS files in core folder: [" + _g.getListOfCSSFiles().join(",") + "]","",10000);
 		});
-		watchers.ThemeWatcher.listenerAdded = true;
 	}
-};
-watchers.ThemeWatcher.getListOfCSSFiles = function() {
-	var files = [];
-	var _g = 0;
-	var _g1 = js.Node.require("fs").readdirSync("core");
-	while(_g < _g1.length) {
-		var item = _g1[_g];
-		++_g;
-		if(js.Node.require("path").extname(item) == ".css") files.push(js.Node.require("path").basename(item));
+	,continueLoading: function() {
+		var _g = this;
+		this.updateTheme();
+		if(this.watcher != null) this.watcher.close();
+		this.watcher = watchers.Watcher.watchFileForUpdates(this.pathToTheme,function() {
+			_g.updateTheme();
+		},1000);
+		if(!this.listenerAdded) {
+			nodejs.webkit.Window.get().on("close",function(e) {
+				if(_g.watcher != null) _g.watcher.close();
+			});
+			this.listenerAdded = true;
+		}
 	}
-	return files;
-};
-watchers.ThemeWatcher.updateTheme = function() {
-	new $("#theme").attr("href",watchers.SettingsWatcher.settings.theme);
+	,getListOfCSSFiles: function() {
+		var files = [];
+		var _g = 0;
+		var _g1 = js.Node.require("fs").readdirSync("core");
+		while(_g < _g1.length) {
+			var item = _g1[_g];
+			++_g;
+			if(js.Node.require("path").extname(item) == ".css") files.push(js.Node.require("path").basename(item));
+		}
+		return files;
+	}
+	,updateTheme: function(type) {
+		var theme = watchers.SettingsWatcher.settings.theme;
+		new $("#theme").attr("href",theme);
+		if(this.currentTheme != null && this.currentTheme != theme) {
+			var ereg = new EReg("/\\* *codeEditorTheme *= *([^ \\*]*) *\\*/","g");
+			var options = { };
+			options.encoding = "utf8";
+			var data = js.Node.require("fs").readFileSync(js.Node.require("path").join("core",theme),options);
+			if(ereg.match(data)) {
+				var codeEditorTheme = ereg.matched(1);
+				cm.Editor.setTheme(codeEditorTheme);
+			}
+		}
+		this.currentTheme = theme;
+	}
+	,__class__: watchers.ThemeWatcher
 };
 watchers.Watcher = function() { };
 $hxClasses["watchers.Watcher"] = watchers.Watcher;
@@ -18053,6 +19340,12 @@ core.PreserveWindowState.window = nodejs.webkit.Window.get();
 haxe.Serializer.USE_CACHE = false;
 haxe.Serializer.USE_ENUM_INDEX = false;
 haxe.Serializer.BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%:";
+haxe.Template.splitter = new EReg("(::[A-Za-z0-9_ ()&|!+=/><*.\"-]+::|\\$\\$([A-Za-z0-9_-]+)\\()","");
+haxe.Template.expr_splitter = new EReg("(\\(|\\)|[ \r\n\t]*\"[^\"]*\"[ \r\n\t]*|[!+=/><*.&|-]+)","");
+haxe.Template.expr_trim = new EReg("^[ ]*([^ ]+)[ ]*$","");
+haxe.Template.expr_int = new EReg("^[0-9]+$","");
+haxe.Template.expr_float = new EReg("^([+-]?)(?=\\d|,\\d)\\d*(,\\d*)?([Ee]([+-]?\\d+))?$","");
+haxe.Template.globals = { };
 haxe.Unserializer.DEFAULT_RESOLVER = Type;
 haxe.Unserializer.BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%:";
 haxe.crypto.Base64.CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -18367,22 +19660,15 @@ menu.BootstrapMenu.menus = new haxe.ds.StringMap();
 menu.BootstrapMenu.menuArray = new Array();
 newprojectdialog.NewProjectDialog.categories = new haxe.ds.StringMap();
 newprojectdialog.NewProjectDialog.categoriesArray = new Array();
-parser.ClassParser.haxeStdTopLevelClassList = ["Int","Float","String","Void","Std","Bool","Dynamic","Array","null","this","break","continue","extends","implements","in","override","package","inline","throw","untyped","using","import"];
+parser.ClassParser.haxeStdTopLevelClassList = ["Int","Float","String","Void","Std","Bool","Dynamic","Array","null","this","break","continue","extends","implements","in","override","package","inline","throw","untyped","using","import","return","extern"];
 parser.ClassParser.topLevelClassList = [];
 parser.ClassParser.haxeStdImports = [];
 parser.ClassParser.importsList = [];
 parser.ClassParser.classCompletions = new haxe.ds.StringMap();
 parser.ClassParser.haxeStdFileList = [];
 parser.ClassParser.filesList = [];
-pluginloader.PluginManager.pathToPlugins = new haxe.ds.StringMap();
-pluginloader.PluginManager.inactivePlugins = [];
-pluginloader.PluginManager.requestedPluginsData = new Array();
-pluginloader.PluginManager.pluginsMTime = new haxe.ds.StringMap();
-pluginloader.PluginManager.firstRun = false;
-pluginloader.PluginManager.pluginsTestingData = "  - cd plugins";
 projectaccess.ProjectAccess.currentProject = new projectaccess.Project();
 watchers.LocaleWatcher.listenerAdded = false;
-watchers.ThemeWatcher.listenerAdded = false;
 Main.main();
 })();
 

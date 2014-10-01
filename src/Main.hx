@@ -1,4 +1,6 @@
 package ;
+import watchers.LocaleWatcher;
+import core.HaxeHelper;
 import kha.KhaProject;
 
 import core.QuickOpen;
@@ -82,12 +84,15 @@ class Main
 		PreserveWindowState.init();
 
 		Browser.window.addEventListener("load", function (e):Void
-		{
+		{			
 			var splitter = Splitter.get();
 			splitter.load();
 
 			SettingsWatcher.load();
-			SnippetsWatcher.load();
+			
+			var snippetsCompletion = SnippetsWatcher.get();
+			
+			snippetsCompletion.load();
 			Utils.prepare();
 			Hotkeys.prepare();
 
@@ -108,6 +113,9 @@ class Main
 			
 			var tabManagerInstance = TabManager.get();
 			tabManagerInstance.load();
+						
+			var classpathWalker = ClasspathWalker.get();
+			classpathWalker.load();
 			
 			HaxeLint.load();
 			Editor.load();
@@ -136,23 +144,27 @@ class Main
 			
 			var quickOpen = QuickOpen.get();
 
+			LocaleWatcher.processHtmlElements();
+			
             sync = false;
 
 			currentTime = Date.now().getTime();
 
 			var processHelper = ProcessHelper.get();
 			
+			var pluginManager = PluginManager.get();
+			
 			processHelper.checkProcessInstalled("haxe", ["-v"], function (installed:Bool)
 			{
 				if (installed)
 				{
 					HaxeServer.check();
-					PluginManager.loadPlugins();
+					pluginManager.loadPlugins();
 				}
 				else
 				{
 					Alertify.error("Haxe compiler is not found");
-					PluginManager.loadPlugins(false);
+					pluginManager.loadPlugins(false);
 				}
 			}
 			);

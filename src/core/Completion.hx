@@ -88,7 +88,10 @@ class Completion
 	{
 		Hxml.load();
 		MetaTags.load();
-		SnippetsCompletion.load();
+		
+		var snippetsCompletion = SnippetsCompletion.get();
+		
+		snippetsCompletion.load();
 		
         completionActive = false;
         
@@ -160,14 +163,19 @@ class Completion
 
 						for (item in functionDeclarations)
 						{
-							var completionData = generateFunctionCompletionItem(item.name, item.params);
-							var completionItem = createCompletionItem(item.name, null, completionData);
-							list.push(completionItem);
+							if (item.name != "")
+							{
+								var completionData = generateFunctionCompletionItem(item.name, item.params);
+								var completionItem = createCompletionItem(item.name, null, completionData);
+								list.push(completionItem);
+							}
 						}
 					}
 					
-				    list = list.concat(SnippetsCompletion.getCompletion());
-                    
+					var snippetsCompletion = SnippetsCompletion.get();
+
+				    list = list.concat(snippetsCompletion.getCompletion());
+
                     var classList = getClassList();
                     
 					var packages:Array<String> = [];				
@@ -275,22 +283,25 @@ class Completion
         var cursor = cm.getCursor();
         var curLine:String = cm.getLine(cursor.line);
         
-        var word = ~/[A-Z_0-9\.]+$/i;
-        
-        var importStart = cursor.ch;
-        var importEnd = importStart;
-        
-        while (importStart > 0 && word.match(curLine.charAt(importStart - 1))) --importStart;
-        
-        if (importStart != importEnd) 
+		if (!StringTools.startsWith(curLine, "import "))
 		{
-            var fullImport = curLine.substring(importStart, importEnd);
-            
-            if (fullImport.indexOf(".") != -1)
-            {
-                var topLevelClassList = getClassList().topLevelClassList;
-                ImportDefinition.searchImportByText(topLevelClassList, fullImport, {line: cursor.line, ch:importStart}, {line: cursor.line, ch:importEnd}, false);
-            }
+			var word = ~/[A-Z_0-9\.]+$/i;
+        
+			var importStart = cursor.ch;
+			var importEnd = importStart;
+
+			while (importStart > 0 && word.match(curLine.charAt(importStart - 1))) --importStart;
+
+			if (importStart != importEnd) 
+			{
+				var fullImport = curLine.substring(importStart, importEnd);
+
+				if (fullImport.indexOf(".") != -1)
+				{
+					var topLevelClassList = getClassList().topLevelClassList;
+					ImportDefinition.searchImportByText(topLevelClassList, fullImport, {line: cursor.line, ch:importStart}, {line: cursor.line, ch:importEnd}, false);
+				}
+			}
 		}
     }
 	
